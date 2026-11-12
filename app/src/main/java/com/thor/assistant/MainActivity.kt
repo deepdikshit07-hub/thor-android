@@ -214,23 +214,46 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
 
-            lower.startsWith("alarm ") || lower.startsWith("set alarm ") ||
-                lower.startsWith("अलार्म ") || lower.startsWith("অ্যালার্ম ") -> {
-                val match = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
-                if (match != null) {
-                    val hour = match.groupValues[1].toIntOrNull()
-                    val minute = match.groupValues[2].toIntOrNull()
-                    if (hour != null && minute != null && hour in 0..23 && minute in 0..59) {
-                        val alarm = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                            putExtra(AlarmClock.EXTRA_HOUR, hour)
-                            putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                            putExtra(AlarmClock.EXTRA_MESSAGE, "THOR alarm")
-                            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                        }
-                        launchIntent(alarm, "Opening the alarm screen for ${"%02d:%02d".format(hour, minute)}.")
-                    } else addMessage("THOR", "That time is not valid.")
-                } else addMessage("THOR", "Use a 24-hour time, for example: alarm 07:30.")
+            
+lower.startsWith("alarm ") ||
+lower.startsWith("set alarm ") ||
+lower.startsWith("अलार्म ") ||
+lower.startsWith("অ্যালার্ম ") -> {
+
+    val match = Regex("""(\d{1,2})[:.](\d{2})""")
+        .find(command)
+
+    if (match != null) {
+        val hour = match.groupValues[1].toIntOrNull()
+        val minute = match.groupValues[2].toIntOrNull()
+
+        if (hour != null && minute != null &&
+            hour in 0..23 && minute in 0..59
+        ) {
+            val alarm = Intent(
+                AlarmClock.ACTION_SET_ALARM
+            ).apply {
+                putExtra(AlarmClock.EXTRA_HOUR, hour)
+                putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                putExtra(AlarmClock.EXTRA_MESSAGE, "THOR alarm")
+                putExtra(AlarmClock.EXTRA_SKIP_UI, false)
             }
+
+            launchIntent(
+                alarm,
+                "Opening the alarm screen for ${"%02d:%02d".format(hour, minute)}."
+            )
+        } else {
+            addMessage("THOR", "That time is not valid.")
+        }
+    } else {
+        addMessage(
+            "THOR",
+            "Use a 24-hour time, for example: alarm 07:30."
+        )
+    }
+}
+
 
             lower.startsWith("search ") || lower.startsWith("google ") ||
                 lower.startsWith("खोज ") || lower.startsWith("সার্চ ") -> {
