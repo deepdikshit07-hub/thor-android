@@ -1,6 +1,8 @@
 package com.thor.assistant
 
 import android.app.Activity
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -58,6 +60,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(Color.rgb(75, 210, 255))
         }
         root.addView(title, matchWrap())
+        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
+            duration = 1500
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            start()
+        }
 
         val subtitle = TextView(this).apply {
             text = "PERSONAL ANDROID ASSISTANT"
@@ -180,7 +188,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
-            lower.startsWith("note ") || lower.startsWith(" याद ") || lower.startsWith("নোট ") -> {
+            lower.startsWith("note ") || lower.startsWith("याद ") || lower.startsWith("নোট ") -> {
                 val text = command.substringAfter(' ').trim()
                 if (text.isNotBlank()) {
                     localStore.addNote(text)
