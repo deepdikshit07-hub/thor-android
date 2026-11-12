@@ -31,12 +31,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var language: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private lateinit var localStore: ThorLocalStore
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        localStore = ThorLocalStore(this)
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
@@ -177,6 +179,41 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         when {
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
+
+            lower.startsWith("note ") || lower.startsWith(" याद ") || lower.startsWith("নোট ") -> {
+                val text = command.substringAfter(' ').trim()
+                if (text.isNotBlank()) {
+                    localStore.addNote(text)
+                    respond("Note saved.", "नोट सेव हो गया।", "নোট সংরক্ষণ করা হয়েছে।")
+                } else addMessage("THOR", "Write something after 'note'.")
+            }
+
+            lower == "notes" || lower == "show notes" || lower == "मेरे नोट" || lower == "নোট দেখাও" -> {
+                val notes = localStore.notes()
+                addMessage("THOR", if (notes.isEmpty()) "You have no saved notes." else
+                    notes.mapIndexed { index, note -> "${index + 1}. $note" }.joinToString("\\n"))
+            }
+
+            lower.startsWith("todo ") || lower.startsWith("task ") -> {
+                val text = command.substringAfter(' ').trim()
+                if (text.isNotBlank()) {
+                    localStore.addTask(text)
+                    respond("Task added.", "काम जोड़ दिया गया।", "কাজ যোগ করা হয়েছে।")
+                } else addMessage("THOR", "Write a task after 'todo'.")
+            }
+
+            lower == "tasks" || lower == "show tasks" || lower == "मेरे काम" || lower == "কাজ দেখাও" -> {
+                val tasks = localStore.tasks()
+                addMessage("THOR", if (tasks.isEmpty()) "Your task list is empty." else
+                    tasks.mapIndexed { index, task -> "${index + 1}. [${if (task.second) "DONE" else "TODO"}] ${task.first}" }.joinToString("\\n"))
+            }
+
+            lower.startsWith("done ") || lower.startsWith("complete task ") -> {
+                val number = command.substringAfterLast(' ').toIntOrNull()
+                if (number != null && localStore.completeTask(number - 1)) {
+                    respond("Task marked complete.", "काम पूरा हुआ।", "কাজ সম্পন্ন হয়েছে।")
+                } else addMessage("THOR", "Use 'done 1' with a valid task number.")
+            }
 
             lower.contains("time") || lower.contains("समय") || lower.contains("সময়") -> {
                 val time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
