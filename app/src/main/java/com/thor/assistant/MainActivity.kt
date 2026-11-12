@@ -372,14 +372,18 @@ lower.startsWith("অ্যালার্ম ") -> {
             2 -> "Reply in natural Bengali."
             else -> "Reply in clear English."
         }
-        addMessage("THOR", "Thinking...")
+        android.util.Log.i("THOR_GEMINI", "Gemini request started")
+        addMessage("THOR", "Thinking... (30 second limit)")
         mainScope.launch {
             try {
                 val answer = GeminiAssistant.ask("$languageInstruction\n\nUser: $prompt")
+                android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
                 addMessage("THOR", answer)
                 speak(answer)
             } catch (error: Exception) {
-                addMessage("THOR", "Gemini couldn't answer: ${error.message ?: "Please check your connection and Firebase App Check setup."}")
+                android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
+                val detail = error.message ?: error.javaClass.simpleName
+                addMessage("THOR", "Gemini error: $detail")
             }
         }
     }
