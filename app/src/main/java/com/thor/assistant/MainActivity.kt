@@ -297,47 +297,22 @@ lower.startsWith("অ্যালার্ম ") -> {
     }
 
     
+
 private fun launchIntent(
     intent: Intent,
     successMessage: String
 ) {
     try {
-        // Try launching the requested Android activity directly.
         startActivity(intent)
         addMessage("THOR", successMessage)
 
-    } catch (e: android.content.ActivityNotFoundException) {
-
-        // If setting an alarm is unsupported, try opening Clock.
-        if (intent.action == AlarmClock.ACTION_SET_ALARM) {
-            try {
-                startActivity(
-                    Intent(AlarmClock.ACTION_SHOW_ALARMS)
-                )
-                addMessage(
-                    "THOR",
-                    "Your Clock app opened. Please set the alarm manually."
-                )
-            } catch (fallbackError: Exception) {
-                addMessage(
-                    "THOR",
-                    "Could not open the Clock app. Please open it manually."
-                )
-            }
-        } else {
-            addMessage(
-                "THOR",
-                "No compatible Android app was found."
-            )
-        }
-
     } catch (e: Exception) {
-        addMessage(
-            "THOR",
-            "Android could not complete that action."
-        )
+        val error = "${e.javaClass.simpleName}: ${e.message}"
+        addMessage("THOR", "DIAGNOSTIC: $error")
+        android.util.Log.e("THOR_DEBUG", error, e)
     }
 }
+
 
 
     private fun helpText(): String =
