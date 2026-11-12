@@ -3,6 +3,7 @@ package com.thor.assistant
 import com.google.firebase.Firebase
 import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.ai
+import kotlinx.coroutines.withTimeout
 
 /**
  * Gemini access through Firebase AI Logic.
@@ -15,8 +16,11 @@ object GeminiAssistant {
     }
 
     suspend fun ask(prompt: String): String {
-        val response = model.generateContent(prompt)
+        // Prevent the UI from waiting forever if the network or Firebase request stalls.
+        val response = withTimeout(30_000L) {
+            model.generateContent(prompt)
+        }
         return response.text?.takeIf { it.isNotBlank() }
-            ?: "I couldn't generate a response. Please try again."
+            ?: "Gemini returned an empty response. Please try again."
     }
 }
