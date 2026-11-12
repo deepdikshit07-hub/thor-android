@@ -199,7 +199,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             lower == "notes" || lower == "show notes" || lower == "मेरे नोट" || lower == "নোট দেখাও" -> {
                 val notes = localStore.notes()
                 addMessage("THOR", if (notes.isEmpty()) "You have no saved notes." else
-                    notes.mapIndexed { index, note -> "${index + 1}. $note" }.joinToString("\\n"))
+                    notes.mapIndexed { index, note -> "${index + 1}. $note" }.joinToString("\n"))
             }
 
             lower.startsWith("todo ") || lower.startsWith("task ") -> {
@@ -213,7 +213,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             lower == "tasks" || lower == "show tasks" || lower == "मेरे काम" || lower == "কাজ দেখাও" -> {
                 val tasks = localStore.tasks()
                 addMessage("THOR", if (tasks.isEmpty()) "Your task list is empty." else
-                    tasks.mapIndexed { index, task -> "${index + 1}. [${if (task.second) "DONE" else "TODO"}] ${task.first}" }.joinToString("\\n"))
+                    tasks.mapIndexed { index, task -> "${index + 1}. [${if (task.second) "DONE" else "TODO"}] ${task.first}" }.joinToString("\n"))
             }
 
             lower.startsWith("done ") || lower.startsWith("complete task ") -> {
