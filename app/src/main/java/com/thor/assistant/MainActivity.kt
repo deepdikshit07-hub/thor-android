@@ -1,6 +1,17 @@
 package com.thor.assistant
 
 import android.app.Activity
+import android.content.pm.ApplicationInfo
+import com.google.firebase.Firebase
+import com.google.firebase.initialize
+import com.google.firebase.appcheck.appCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -34,6 +45,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
+    private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var firebaseReady = false
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
@@ -41,6 +54,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
+        initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
@@ -188,6 +202,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
+            lower.startsWith("ask ") || lower.startsWith("chat ") -> {
+                val prompt = command.substringAfter(' ').trim()
+                if (prompt.isNotBlank()) askGemini(prompt)
+                else addMessage("THOR", "Type a question after 'ask'.")
+            }
+
             lower.startsWith("note ") || lower.startsWith("याद ") || lower.startsWith("নোট ") -> {
                 val text = command.substringAfter(' ').trim()
                 if (text.isNotBlank()) {
@@ -325,6 +345,45 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
+    private fun initializeFirebase() {
+        try {
+            Firebase.initialize(context = this)
+            val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            val providerFactory = if (isDebug) {
+                DebugAppCheckProviderFactory.getInstance()
+            } else {
+                PlayIntegrityAppCheckProviderFactory.getInstance()
+            }
+            Firebase.appCheck.installAppCheckProviderFactory(providerFactory)
+            firebaseReady = true
+        } catch (error: Exception) {
+            firebaseReady = false
+            addMessage("THOR", "Firebase setup needs attention: ${error.message ?: "initialization failed"}")
+        }
+    }
+
+    private fun askGemini(prompt: String) {
+        if (!firebaseReady) {
+            addMessage("THOR", "Online AI is not ready. Check Firebase setup and try again.")
+            return
+        }
+        val languageInstruction = when (language.selectedItemPosition) {
+            1 -> "Reply in natural Hindi."
+            2 -> "Reply in natural Bengali."
+            else -> "Reply in clear English."
+        }
+        addMessage("THOR", "Thinking...")
+        mainScope.launch {
+            try {
+                val answer = GeminiAssistant.ask("$languageInstruction\n\nUser: $prompt")
+                addMessage("THOR", answer)
+                speak(answer)
+            } catch (error: Exception) {
+                addMessage("THOR", "Gemini couldn't answer: ${error.message ?: "Please check your connection and Firebase App Check setup."}")
+            }
+        }
+    }
+
     private fun openInstalledApp(requestedName: String) {
         val wanted = requestedName.lowercase(Locale.ROOT)
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -415,6 +474,7 @@ private fun launchIntent(
     override fun onDestroy() {
         tts?.stop()
         tts?.shutdown()
+        mainScope.cancel()
         super.onDestroy()
     }
 }
