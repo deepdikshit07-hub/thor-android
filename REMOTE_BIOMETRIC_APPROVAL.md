@@ -1,37 +1,49 @@
-# THOR Remote Biometric Approval — implementation notes
+# THOR Remote Biometric Master Mode
 
-## Agreed device roles
-- Device A: user's Oppo A16 (Android 10), trusted approval phone.
-- Device B: the other Android phone requesting Master Mode.
-- Expected use: usually zero or one approval request per day.
+## Agreed behavior
 
-## Session lifetime decision
-- No 12-hour or other app-level timeout.
-- Closing THOR, swiping it away, force-stopping it, or restarting Device B must not by itself end an approved session.
-- The Android Firebase Authentication SDK persists a signed-in user across app restarts. THOR now restores Master Mode only when the restored ID token contains the server-issued `thorMaster: true` claim.
-- Saying **I quit** signs out on Device B and clears its locally persisted Firebase session.
-- Clearing THOR's app data, uninstalling it, explicit sign-out, or server-side revocation can end the session. Device A remote revocation still requires the trusted approval backend and is not implemented yet.
-- Firebase ID tokens are refreshed by the SDK; the session has no fixed 12-hour application timer. This does not mean credentials can never be revoked.
+- Device A: the trusted Oppo A16 (Android 10).
+- Device B: the other Android phone that requests Master Mode.
+- Device B requests access; Device A receives an FCM notification and must approve with its enrolled fingerprint.
+- The fingerprint template never leaves Device A. Android Keystore holds a P-256 private key; only the public key is registered with the Worker.
+- No fixed 12-hour or other app-level session timer. Closing THOR, swiping it away, or restarting Device B does not itself end the Firebase-authenticated session.
+- Saying **I quit** signs out Device B and asks the Worker to end that session.
+- Device A can say **revoke master sessions** to list and revoke active sessions.
+- Remote revocation is enforced the next time Device B checks in. It cannot be detected while Device B is offline.
+- FCM delivery is best-effort. Force-stop, disabled notifications, battery restrictions, or no network can delay or prevent the notification.
 
-## Existing device-local biometric primitive
-`ThorDeviceApproval.kt` contains the P-256 Android Keystore signing primitive. It keeps the private key on Device A and uses BiometricPrompt for each signing operation. It is not yet connected to the app's UI or a pairing/approval server.
+## Code now present on the experimental branch
 
-## Session persistence groundwork committed
-- MainActivity now uses FragmentActivity, so the AndroidX BiometricPrompt helper can be integrated.
-- THOR listens for Firebase Auth state changes and restores Master Mode only after checking the `thorMaster` custom claim.
-- The `I quit` command signs out and therefore clears the persisted session.
-- This does not activate remote biometric approval. The existing email OTP flow is still present and its callable Cloud Functions are not deployed on the Spark plan.
+- `ThorDeviceApproval.kt`: P-256 Android Keystore signing with BiometricPrompt.
+- `ThorMasterApprovalClient.kt`: HTTPS client for the Cloudflare Worker API.
+- `ThorMessagingService.kt`: FCM notification handling and notification tap routing.
+- `MainActivity.kt`: Device A registration, Device B request/poll, fingerprint approval, custom-token sign-in, session check, local sign-out, and Device A session revocation command.
+- `cloudflare/master-mode/src/index.js`: Worker endpoints for device registration, short-lived approval requests, FCM sending, ECDSA signature verification, Firebase custom-token issuance, session checking and revocation.
+- `cloudflare/master-mode/schema.sql`: D1 tables for registered devices, one-time approval requests and sessions.
+- `cloudflare/master-mode/README.md`: deployment and Firebase account setup.
 
-## Not yet implemented — do not treat remote biometric Master Mode as enabled
-This stage does NOT pair phones, send push notifications, validate approval requests remotely, prevent server-side replay, or issue a Master credential after Device A fingerprint approval.
+The legacy email OTP client flow has been removed. Firebase Cloud Functions are not used by this implementation. The Worker uses Firebase Identity Toolkit to validate Firebase ID tokens and a private service-account key kept only in Cloudflare Worker secrets.
 
-## Remaining stages
-1. Secure pairing: authenticate both devices, register Device A's public key and Device B's identity, and confirm pairing on both phones.
-2. Trusted approval service: validate signed-in device identity, short request expiry, one-time nonce consumption, rate limits, and explicit revocation.
-3. FCM: add token registration and notification handling plus a trusted sender. A Cloudflare Worker can be used as a free-tier sender if its service-account credential is kept only in Worker secrets.
-4. Device A approval UI: fetch the pending challenge, display the requesting device, require fingerprint approval, and send the ECDSA signature to the trusted service.
-5. Device B session issuance: only the trusted service may issue the custom token with `thorMaster: true` after signature verification and replay checks.
-6. Test both actual phones, including wrong fingerprint, expiry, replay, revocation, network loss, app close, force-stop, and device restart.
+## Not yet a production-ready release
 
-## Free-tier and delivery note
-Cloudflare currently documents 100,000 Worker requests per day on its Free plan. Provider quotas and terms can change. FCM notification delivery is best-effort; force-stop, disabled notifications, battery restrictions, or lack of network can delay or prevent delivery. Never put service-account private keys or other server credentials in Android code or GitHub.
+The source is prepared, but the system is **not ready to use** until all of these are complete:
+
+1. Deploy the Cloudflare Worker and create/apply its D1 database schema.
+2. Configure `MASTER_UID`, `FIREBASE_WEB_API_KEY`, and `FIREBASE_SERVICE_ACCOUNT_JSON` as Worker secrets.
+3. Create the Device A Firebase Email/Password account and a separate Device B Firebase account.
+4. Register Device A and Device B from the app using the deployed Worker URL.
+5. Build the current experimental branch successfully.
+6. Test the real phones for valid/invalid fingerprint, expired request, replay attempt, notification delivery, app close/restart, `I quit`, and remote revocation.
+
+The latest Android build must be checked before installing. A successful CI build alone does not prove that FCM, Worker deployment, biometric hardware, or two-device session behavior works.
+
+## Important boundaries
+
+- The Worker and Android app must use the same Firebase project: `thor-ai-2791`.
+- Device A must sign in with the Firebase account whose UID is configured as `MASTER_UID`.
+- Device B must use a different Firebase account. The Worker rejects registering the master account as a requester.
+- Never put the service-account JSON/private key in GitHub, Android code, or this chat.
+- The custom token is short-lived and exchanged by Firebase Auth for its persisted session. The session has no fixed app-level expiry; the Worker can revoke it.
+- If Device B is offline, it cannot learn about remote revocation until it reconnects.
+- Voice matching is still experimental and is not used as the security factor for Master Mode.
+- This feature does not yet gate any additional THOR commands; it establishes and validates the Master Mode identity/session state for later protected features.
