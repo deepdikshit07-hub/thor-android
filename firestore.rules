@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // OTP records are server-only. The Admin SDK in Cloud Functions bypasses rules.
+    match /masterOtp/{document} {
+      allow read, write: if false;
+    }
+  }
+}
