@@ -47,7 +47,7 @@ class ThorSpeakerMatch(
         val normalized = normalize(embedding)
         val bytes = java.nio.ByteBuffer.allocate(embeddingSize * 4)
             .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        normalized.forEach(bytes::putFloat)
+        normalized.forEach { bytes.putFloat(it) }
         return android.util.Base64.encodeToString(bytes.array(), android.util.Base64.NO_WRAP)
     }
 
@@ -55,7 +55,7 @@ class ThorSpeakerMatch(
         val bytes = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
         require(bytes.size == embeddingSize * 4)
         val buffer = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        FloatArray(embeddingSize) { buffer.float }.also(::normalize)
+        normalize(FloatArray(embeddingSize) { buffer.float })
     }.getOrNull()
 
     private fun normalize(input: FloatArray): FloatArray {
