@@ -35,7 +35,7 @@ The Android branch includes the Worker API client, Firebase Messaging notificati
 
 ## Firebase account preparation
 
-1. In Firebase Console for `thor-ai-2791`, confirm Email/Password sign-in is enabled.
+1. In Firebase Console for `thor-ai-2791b`, confirm Email/Password sign-in is enabled.
 2. Create one Firebase Authentication user for Device A using the trusted master email. Copy that user's **UID** and configure it as the Cloudflare `MASTER_UID` secret.
 3. Create a separate Firebase Authentication user for Device B. Device B's Firebase UID is the account that receives the custom-token Master session.
 4. Never send either account password or the service-account JSON in this chat, GitHub, or a source file. Enter account passwords only in THOR's setup dialog on the relevant phone.
@@ -63,5 +63,5 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 - The service-account JSON and master UID are secrets/configuration, not Android resources.
 - The custom token is short-lived (one hour) and is exchanged by Firebase Auth for its normal persisted user session. The session itself has no fixed application timeout; remote revocation is enforced when the app checks the Worker.
 - The Android client must check session revocation on app start/resume and before privileged actions. Offline operation cannot discover a new remote revocation until connectivity returns.
-- Configure Firebase Authentication and FCM for the same project (`thor-ai-2791`). The Worker uses the Firebase project ID in `wrangler.toml`.
+- Configure Firebase Authentication and FCM for the same project (`thor-ai-2791b`). The Worker uses the Firebase project ID in `wrangler.toml`.
 - Before production use, add automated integration tests, abuse monitoring, and a second-device test matrix. This backend source is not proof of a successful deployment.

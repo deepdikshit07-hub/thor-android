@@ -8,7 +8,7 @@ database_name = "thor-master-approval"
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
 
 [vars]
-FIREBASE_PROJECT_ID = "thor-ai-2791"
+FIREBASE_PROJECT_ID = "thor-ai-2791b"
 
 # Configure these as Worker secrets, never in this file:
 # MASTER_UID

@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URI
 import java.util.UUID
 
 /**
@@ -37,8 +38,21 @@ class ThorMasterApprovalClient(context: Context) {
 
     private fun requireBaseUrl(): String {
         val value = baseUrl
-        require(value.startsWith("https://") && value.length < 300) { "Set the HTTPS Cloudflare Worker URL first." }
-        return value
+        val uri = runCatching { URI(value) }.getOrNull()
+        require(
+            value.length < 300 &&
+                uri != null &&
+                uri.scheme.equals("https", ignoreCase = true) &&
+                uri.host?.endsWith(".workers.dev", ignoreCase = true) == true &&
+                uri.userInfo == null &&
+                uri.port in -1..443 &&
+                uri.rawQuery == null &&
+                uri.rawFragment == null &&
+                uri.path.orEmpty().trimEnd('/').isEmpty()
+        ) {
+            "Use your HTTPS Cloudflare workers.dev URL (without a path)."
+        }
+        return value.trimEnd('/')
     }
 
     private fun idToken(): String {

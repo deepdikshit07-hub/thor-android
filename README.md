@@ -1,79 +1,48 @@
-# THOR Android Assistant — starter project
+# THOR Android Assistant
 
-This is a lightweight first-stage Android app starter for the Oppo A16 / ARM64 Android devices.
+THOR is an experimental Android personal assistant project. The active development branch is
+`experiment/boss-speaker-verification`; keep it separate from the main branch while features are
+being validated.
 
-## Included
-- Text command input
-- Private on-device notes (`note <text>`, `notes`)
-- Private on-device to-do list (`todo <text>`, `tasks`, `done <number>`)
-- Subtle animated THOR title
-- Speech input through the Android speech-recognition activity
-- Android Text-to-Speech
-- English, Hindi and Bengali language selection
-- Open a matching installed app
-- Open Settings
-- Open the dialer (does not place a call)
-- Open an SMS composer (does not send a message)
-- Open the alarm UI for a specified 24-hour time
-- Create a reminder by opening the Clock app with a label and time for user confirmation (`remind 07:30 Take my book`)
-- Open an installed music app (`play music`) or search YouTube for a requested track (`play <song name>`)
-- Web search using the browser
+## Current project features
 
-## Build without Android Studio
-The project is designed to be edited on a phone and built by GitHub Actions.
+- Dark, blue-accented assistant interface with five bottom-navigation sections.
+- Animated holographic reactor HUD and startup animation.
+- Custom THOR launcher artwork.
+- Text commands, Android speech-recognition handoff, and Android Text-to-Speech.
+- English, Hindi, and Bengali response selection.
+- Local notes, tasks, user-taught lessons, and reminders.
+- App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
+- Optional on-device text generation using the bundled Qwen LiteRT model.
+- Experimental WeSpeaker embedding enrollment; automatic speaker identification is not enabled.
+- Remote Master Mode foundation using Cloudflare Worker/D1, Firebase Authentication, FCM, and
+  Device A biometric signing.
 
-1. Create a GitHub repository named `thor-android`.
-2. Upload the contents of this folder, keeping the same directory structure.
-3. Open the repository's Actions tab and enable Actions if asked.
-4. Select **Build THOR APK** and press **Run workflow**, or push a commit to `main`.
-5. Open the successful workflow run, scroll to **Artifacts**, and download `THOR-debug-apk`.
-6. Extract the ZIP and install `app-debug.apk` on your Android phone.
+## Build and download
 
-## Termux editing setup
-Install Termux from its official F-Droid or GitHub distribution. In Termux:
+GitHub Actions builds a debug APK when commits are pushed to `experiment/**`.
 
-```sh
-pkg update && pkg upgrade -y
-pkg install git nano unzip gh -y
-termux-setup-storage
-cd ~/storage/downloads
-unzip THOR-Android-Starter.zip
-cd THOR-Android-Starter
-```
+1. Open the repository's **Actions** tab.
+2. Select the latest successful **Build THOR APK** run for the experimental branch.
+3. Download the `THOR-debug-apk` artifact and extract `app-debug.apk`.
+4. Install it on an Android device after reviewing Android's installation prompt.
 
-Create a new **empty** GitHub repository named `thor-android` in your browser (do not add a README or license). Then, in Termux, run:
+The APK includes the offline model assets downloaded by CI and can therefore be very large.
 
-```sh
-gh auth login
-```
+## Important limitations
 
-Choose GitHub.com, HTTPS, and the browser/device-code sign-in option. Complete sign-in on GitHub. Then run:
+- A successful CI build is not a physical-device test.
+- Android's speech-recognition service may require internet; requesting offline recognition does not guarantee offline speech-to-text.
+- Text-to-Speech language availability depends on installed voice data.
+- Automatic Boss voice recognition is not active; the speaker embedding work is experimental and not authentication.
+- Remote Master Mode needs the Cloudflare Worker, D1 schema, Firebase secrets/accounts, FCM, and two-device testing.
+- The current app does not yet enforce Master Mode as a gate for additional protected commands.
+- Accessibility navigation requires the user to enable THOR Navigation manually in Android settings.
+- Android battery management and notification permissions can affect reminders and FCM delivery.
 
-```sh
-git init
-git add .
-git commit -m "Create THOR starter app"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/thor-android.git
-git push -u origin main
-```
+## Security and configuration
 
-Replace `YOUR-USERNAME` with your GitHub username. For later edits:
-
-```sh
-git add .
-git commit -m "Update THOR"
-git push
-```
-
-Never paste a password or access token into chat or commit it into the project.
-
-## Device notes
-- `minSdk 23` supports older Android releases; the app should run on Android 10/11 and newer.
-- The speech-recognition activity is provided by the device's installed speech service. `PREFER_OFFLINE` is only a preference and does not guarantee offline recognition.
-- For offline speech, download the required language packs in the phone's speech input settings if your installed engine offers them.
-- Text-to-Speech voice availability depends on installed Android TTS voice data.
-- This starter does not read private files, messages, call logs, or notifications. It does not have unrestricted phone access.
-- Calling opens the dialer; SMS opens the compose screen. You review and confirm those actions yourself.
-- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
-- Do not place API keys, passwords, or tokens in source code or GitHub commits.
+The Android Firebase configuration file identifies project `thor-ai-2791b` (project number
+`418315674236`). Keep the Worker `FIREBASE_PROJECT_ID`, Firebase Web API key, and service-account
+project consistent with that project. Never commit service-account JSON, private keys, passwords,
+or App Check debug tokens.
