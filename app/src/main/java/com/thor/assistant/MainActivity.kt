@@ -76,7 +76,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
-        if (offlineAi.isModelInstalled()) {
+        if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
                 try {
@@ -234,7 +234,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         button.isEnabled = false
         mainScope.launch {
             try {
-                if (!offlineAi.isModelInstalled()) {
+                if (!offlineAi.isModelInstalled() && !offlineAi.hasBundledModel()) {
                     addMessage("THOR", "Downloading the offline language model (~586 MB). Wi-Fi is recommended. Keep THOR open until it finishes.")
                     offlineAi.downloadModel { downloaded, total ->
                         val percent = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(0, 100) else 0
@@ -242,7 +242,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     }
                 }
                 button.text = "LOADING OFFLINE AI..."
-                addMessage("THOR", "Model downloaded. Initializing the offline AI; first load may take a little while.")
+                addMessage("THOR", "Preparing the offline model and initializing the AI; first load may take a little while.")
                 offlineAi.initialize()
                 button.text = "OFFLINE AI READY"
                 addMessage("THOR", "Offline AI is ready. English, Hindi, Bengali, and casual mixed-language chat are supported.")
@@ -256,7 +256,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun askLocalOrFallback(prompt: String) {
-        if (!offlineAi.isModelInstalled()) {
+        if (!offlineAi.isModelInstalled() && !offlineAi.hasBundledModel()) {
             val fallback = offlineReply(prompt) +
                 "\\n\\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
             addMessage("THOR", fallback)
