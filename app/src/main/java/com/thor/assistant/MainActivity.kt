@@ -1,9 +1,11 @@
 package com.thor.assistant
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.media.MediaRecorder
 import android.view.KeyEvent
 import android.speech.RecognitionListener
 import android.speech.SpeechRecognizer
@@ -28,6 +30,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.provider.AlarmClock
 import android.provider.Settings
 import android.speech.RecognizerIntent
@@ -56,6 +59,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
+    private lateinit var bossProfile: ThorBossProfile
+    private var bossSetupStatus: TextView? = null
+    private var bossRecorder: MediaRecorder? = null
+    private var bossSetupDialog: AlertDialog? = null
+    private var pendingBossVoiceEnrollment = false
     private lateinit var offlineAi: ThorOfflineAi
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -74,11 +82,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
+        bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
+        showBossSetupIfNeeded()
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
@@ -90,6 +100,130 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     offlineAiButton?.text = "RETRY OFFLINE AI"
                     addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
                 }
+            }
+        }
+    }
+
+    private fun showBossSetupIfNeeded() {
+        if (bossProfile.isConfigured()) return
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 12, 28, 8)
+        }
+        val nameInput = EditText(this).apply {
+            hint = "What should THOR call you?"
+            setSingleLine(true)
+        }
+        val explanation = TextView(this).apply {
+            text = "Set up this installation's Boss profile. Record a short voice sample and THOR will save it privately on this device. Speaker matching is not active yet in this build."
+            textSize = 14f
+        }
+        val status = TextView(this).apply {
+            text = "Enter your name, then record your voice."
+            textSize = 13f
+        }
+        bossSetupStatus = status
+        val recordButton = Button(this).apply { text = "RECORD BOSS VOICE (5 SECONDS)" }
+        val finishButton = Button(this).apply { text = "FINISH WITHOUT VOICE SAMPLE" }
+        panel.addView(explanation)
+        panel.addView(nameInput)
+        panel.addView(recordButton)
+        panel.addView(status)
+        panel.addView(finishButton)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Welcome to THOR")
+            .setView(panel)
+            .setCancelable(false)
+            .create()
+        bossSetupDialog = dialog
+
+        recordButton.setOnClickListener {
+            val name = nameInput.text.toString().trim()
+            if (name.isBlank()) {
+                nameInput.error = "Enter the Boss name first"
+                return@setOnClickListener
+            }
+            bossProfile.saveBossName(name)
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                pendingBossVoiceEnrollment = true
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1004)
+            } else {
+                startBossVoiceEnrollment()
+            }
+        }
+        finishButton.setOnClickListener {
+            val name = nameInput.text.toString().trim()
+            if (name.isBlank()) {
+                nameInput.error = "Enter a name to continue"
+                return@setOnClickListener
+            }
+            bossProfile.saveBossName(name)
+            bossProfile.finishSetup()
+            dialog.dismiss()
+            addMessage("THOR", "Welcome, " + bossProfile.bossName() + ". Your Boss profile is saved on this device. Voice matching is not enabled yet.")
+            speak("Welcome, Boss.")
+        }
+        dialog.show()
+    }
+
+    private fun startBossVoiceEnrollment() {
+        val sample = bossProfile.voiceSampleFile()
+        try {
+            bossRecorder?.release()
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+            bossRecorder = recorder
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setAudioSamplingRate(16000)
+            recorder.setAudioEncodingBitRate(64000)
+            recorder.setOutputFile(sample.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            bossSetupStatus?.text = "Recording... speak naturally for five seconds."
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    bossRecorder?.stop()
+                    bossRecorder?.release()
+                    bossRecorder = null
+                    bossProfile.finishSetup()
+                    bossSetupDialog?.dismiss()
+                    addMessage("THOR", "Voice sample saved privately on this device. Welcome, " + bossProfile.bossName() + ". Speaker matching still needs its verification model before I can identify voices.")
+                    speak("Welcome, Boss.")
+                } catch (error: Exception) {
+                    bossRecorder?.release()
+                    bossRecorder = null
+                    sample.delete()
+                    bossSetupStatus?.text = "Recording failed. Please try again or finish without a voice sample."
+                    android.util.Log.e("THOR_BOSS", "Voice enrollment recording failed", error)
+                }
+            }, 5_000L)
+        } catch (error: Exception) {
+            bossRecorder?.release()
+            bossRecorder = null
+            bossSetupStatus?.text = "Could not start recording: " + (error.message ?: "microphone unavailable") + ". Try again or finish without a sample."
+        }
+    }
+
+    @Deprecated("Legacy permission callback is used to avoid an extra AndroidX dependency.")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1004 && pendingBossVoiceEnrollment) {
+            pendingBossVoiceEnrollment = false
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                startBossVoiceEnrollment()
+            } else {
+                bossSetupStatus?.text = "Microphone permission was not granted. You can allow it in Android settings and try again, or finish without a voice sample."
             }
         }
     }
@@ -1018,6 +1152,9 @@ private fun launchIntent(
 
     override fun onDestroy() {
         stopWakeWord()
+        try { bossRecorder?.stop() } catch (_: Exception) {}
+        bossRecorder?.release()
+        bossRecorder = null
         tts?.stop()
         tts?.shutdown()
         offlineAi.close()
