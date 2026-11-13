@@ -11,7 +11,7 @@ This is the server-side foundation for remote biometric approval on the free Clo
 - The Worker verifies the signature, atomically consumes the pending request, and creates a server-side session.
 - Only Device B's authenticated Firebase UID can retrieve a Firebase custom token carrying `thorMaster: true`.
 - The session can be revoked from Device A. Device B must check the session with the Worker to detect remote revocation.
-- The Worker validates Firebase ID tokens using Google's tokeninfo endpoint and enforces the configured Firebase project audience/issuer.
+- The Worker validates Firebase ID tokens through Firebase Identity Toolkit's `accounts:lookup` endpoint before accepting the account UID.
 
 A fingerprint image or fingerprint template is never uploaded. Biometrics are processed by Android.
 
@@ -28,6 +28,7 @@ The Android branch now includes the Worker API client, Firebase Messaging notifi
 5. Create a service account for the same Firebase project with permission to send Firebase Cloud Messaging messages and mint Firebase custom tokens. Download its JSON privately. Never commit it.
 6. Set secrets with Wrangler:
    - `npx wrangler secret put MASTER_UID`
+   - `npx wrangler secret put FIREBASE_WEB_API_KEY` (use the Firebase project's Web API key from Project settings; it is an app identifier, not a password)
    - `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT_JSON` (paste the complete service-account JSON when prompted)
 7. Deploy: `npm run deploy`.
 8. Test `GET https://YOUR-WORKER.workers.dev/health`. It should return `{"ok":true,"service":"thor-master-approval"}`.
