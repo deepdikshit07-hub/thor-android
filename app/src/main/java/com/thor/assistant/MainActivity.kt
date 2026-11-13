@@ -54,6 +54,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
+    private lateinit var offlineAi: ThorOfflineAi
+    private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
     private var wakeRecognizer: SpeechRecognizer? = null
@@ -69,10 +71,24 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
+        offlineAi = ThorOfflineAi(applicationContext)
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
+        if (offlineAi.isModelInstalled()) {
+            offlineAiButton?.text = "LOADING OFFLINE AI..."
+            mainScope.launch {
+                try {
+                    offlineAi.initialize()
+                    offlineAiButton?.text = "OFFLINE AI READY"
+                    addMessage("THOR", "Offline AI loaded. I can now chat without internet.")
+                } catch (error: Exception) {
+                    offlineAiButton?.text = "RETRY OFFLINE AI"
+                    addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
+                }
+            }
+        }
     }
 
     private fun buildScreen() {
@@ -111,6 +127,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             languages
         )
         root.addView(language, matchWrap())
+
+        val offlineButton = makeButton("INSTALL OFFLINE AI (~586 MB)")
+        offlineAiButton = offlineButton
+        offlineButton.setOnClickListener { installOfflineAi() }
+        root.addView(offlineButton, matchWrap())
 
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
@@ -202,6 +223,61 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         text = label
         textSize = 12f
         isAllCaps = false
+    }
+
+    private fun installOfflineAi() {
+        val button = offlineAiButton ?: return
+        if (offlineAi.isReady()) {
+            addMessage("THOR", "Offline AI is already ready.")
+            return
+        }
+        button.isEnabled = false
+        mainScope.launch {
+            try {
+                if (!offlineAi.isModelInstalled()) {
+                    addMessage("THOR", "Downloading the offline language model (~586 MB). Wi-Fi is recommended. Keep THOR open until it finishes.")
+                    offlineAi.downloadModel { downloaded, total ->
+                        val percent = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(0, 100) else 0
+                        runOnUiThread { button.text = "DOWNLOADING $percent%" }
+                    }
+                }
+                button.text = "LOADING OFFLINE AI..."
+                addMessage("THOR", "Model downloaded. Initializing the offline AI; first load may take a little while.")
+                offlineAi.initialize()
+                button.text = "OFFLINE AI READY"
+                addMessage("THOR", "Offline AI is ready. English, Hindi, Bengali, and casual mixed-language chat are supported.")
+            } catch (error: Exception) {
+                button.text = if (offlineAi.isModelInstalled()) "RETRY OFFLINE AI" else "INSTALL OFFLINE AI (~586 MB)"
+                addMessage("THOR", "Offline AI setup failed: ${error.message ?: error.javaClass.simpleName}")
+            } finally {
+                button.isEnabled = true
+            }
+        }
+    }
+
+    private fun askLocalOrFallback(prompt: String) {
+        if (!offlineAi.isModelInstalled()) {
+            val fallback = offlineReply(prompt) +
+                "\\n\\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
+            addMessage("THOR", fallback)
+            speak(fallback)
+            return
+        }
+        mainScope.launch {
+            try {
+                if (!offlineAi.isReady()) {
+                    addMessage("THOR", "Loading the offline AI...")
+                    offlineAi.initialize()
+                }
+                val answer = offlineAi.ask(prompt)
+                addMessage("THOR", answer)
+                speak(answer)
+            } catch (error: Exception) {
+                val fallback = offlineReply(prompt)
+                addMessage("THOR", "Offline AI error: ${error.message ?: "could not generate a reply"}. $fallback")
+                speak(fallback)
+            }
+        }
     }
 
     private fun startVoiceInput() {
@@ -597,9 +673,7 @@ lower.startsWith("অ্যালার্ম ") -> {
 
     private fun askGemini(prompt: String) {
         if (!firebaseReady) {
-            val offline = offlineReply(prompt)
-            addMessage("THOR", offline)
-            speak(offline)
+            askLocalOrFallback(prompt)
             return
         }
         val languageInstruction = when (language.selectedItemPosition) {
@@ -619,9 +693,8 @@ lower.startsWith("অ্যালার্ম ") -> {
             } catch (error: Exception) {
                 android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
                 val detail = error.message ?: error.javaClass.simpleName
-                val offline = offlineReply(prompt)
-                addMessage("THOR", "Online AI unavailable ($detail). Offline mode: $offline")
-                speak(offline)
+                addMessage("THOR", "Online AI unavailable ($detail). Switching to the on-device AI.")
+                askLocalOrFallback(prompt)
             }
         }
     }
@@ -714,8 +787,9 @@ private fun launchIntent(
         "• pause music / next song / previous song / volume up\n" +
         "• wifi settings / bluetooth settings\n" +
         "• what time is it\n" +
-        "• search space news\n\n" +
-        "Hindi/Bengali recognition depends on the installed speech service."
+        "• search space news\n" +
+        "• install offline AI for open-ended offline chat\n\n" +
+        "The offline language model is a separate ~586 MB download. Hindi/Bengali speech recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
         val answer = when (language.selectedItemPosition) {
@@ -781,6 +855,7 @@ private fun launchIntent(
         stopWakeWord()
         tts?.stop()
         tts?.shutdown()
+        offlineAi.close()
         mainScope.cancel()
         super.onDestroy()
     }
