@@ -546,6 +546,13 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun authenticateAndRegisterApprover(email: String, password: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            addMessage("THOR", "Allow notifications, then tap MASTER MODE SETUP again so Device A can receive approval alerts.")
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1005)
+            return
+        }
         if (email.isBlank() || password.isBlank()) {
             addMessage("THOR", "Enter the trusted Device A Firebase email and password.")
             return
