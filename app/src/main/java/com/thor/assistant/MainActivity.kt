@@ -128,6 +128,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
+        intent.getStringExtra("thor_approval_request_id")?.takeIf { it.isNotBlank() }?.let { requestId ->
+            window.decorView.post { reviewMasterApproval(requestId) }
+        }
         showBossSetupIfNeeded()
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
