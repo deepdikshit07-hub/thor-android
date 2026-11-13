@@ -154,6 +154,7 @@ async function handle(request, env) {
       if (typeof deviceId !== "string" || deviceId.length > 80 ||
           !["approver", "requester"].includes(role)) return json({ error: "Invalid device registration." }, 400);
       if (role === "approver" && identity.uid !== env.MASTER_UID) return json({ error: "Only the configured master account can register the trusted phone." }, 403);
+      if (role === "requester" && identity.uid === env.MASTER_UID) return json({ error: "Use a separate Firebase account on Device B." }, 403);
       if (role === "approver" && (typeof publicKeyBase64 !== "string" || publicKeyBase64.length > 2048 || typeof fcmToken !== "string" || fcmToken.length > 4096)) return json({ error: "Trusted phone requires its public key and FCM token." }, 400);
       if (role === "requester" && fcmToken !== undefined && (typeof fcmToken !== "string" || fcmToken.length > 4096)) return json({ error: "Invalid FCM token." }, 400);
       const now = Math.floor(Date.now() / 1000);
