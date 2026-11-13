@@ -55,6 +55,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
+    private lateinit var learningMemory: ThorLearningMemory
     private lateinit var offlineAi: ThorOfflineAi
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -72,6 +73,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
+        learningMemory = ThorLearningMemory(this)
         offlineAi = ThorOfflineAi(applicationContext)
         initializeFirebase()
         tts = TextToSpeech(this, this)
@@ -274,7 +276,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     addMessage("THOR", "Loading the offline AI...")
                     offlineAi.initialize()
                 }
-                val answer = offlineAi.ask(prompt)
+                val answer = offlineAi.ask(learningMemory.contextFor(prompt))
                 addMessage("THOR", answer)
                 speak(answer)
             } catch (error: Exception) {
@@ -322,6 +324,28 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val lower = command.lowercase(Locale.ROOT)
 
         when {
+            learningMemory.parseTeaching(command)?.let { learned ->
+                addMessage("THOR", learned)
+                speak(learned)
+            } != null -> Unit
+
+            lower in listOf("what have you learned", "show learned memory", "show what you learned", "তুমি কী শিখেছ", "क्या सीखा") -> {
+                val entries = learningMemory.all()
+                addMessage("THOR", if (entries.isEmpty()) "I haven't saved any lessons yet." else
+                    entries.mapIndexed { index, entry -> "${index + 1}. ${entry.first} — ${entry.second}" }.joinToString("\\n"))
+            }
+
+            lower.startsWith("forget learning ") -> {
+                val term = command.substringAfter("forget learning ", "").trim()
+                val removed = learningMemory.forget(term)
+                addMessage("THOR", if (removed) "I removed that lesson from learned memory." else "I couldn't find a saved lesson matching that.")
+            }
+
+            lower in listOf("clear learned memory", "forget everything you learned") -> {
+                learningMemory.clear()
+                addMessage("THOR", "Learned memory cleared.")
+            }
+
             // Natural compound command: "open MX Player and play/resume music".
             Regex("""^(?:hey\s+)?thor[, ]*(?:please\s+)?(?:open|launch)\s+(.+?)\s+and\s+(?:then\s+)?(play|resume)(?:\s+the)?(?:\s+music)?$""", RegexOption.IGNORE_CASE)
                 .find(command)?.let { match ->
