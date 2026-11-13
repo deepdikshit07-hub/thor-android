@@ -44,6 +44,7 @@ import android.widget.TextView
 import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Calendar
 import java.util.Locale
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
@@ -119,6 +120,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(Color.LTGRAY)
         }
         root.addView(subtitle, matchWrap())
+
+        root.addView(ThorHudView(this), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (142 * resources.displayMetrics.density).toInt()
+        ).apply { bottomMargin = 8 })
 
         language = Spinner(this)
         language.adapter = ArrayAdapter(
@@ -408,34 +413,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
 
             
-lower.startsWith("alarm ") ||
-
-            lower.startsWith("remind ") || lower.startsWith("reminder ") ||
-                lower.startsWith("मुझे याद ") || lower.startsWith("মনে করিয়ে ") -> {
-                // Format: remind 07:30 Take my book. The Clock app asks the
-                // user to confirm; THOR does not silently schedule an alarm.
-                val timeMatch = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
-                if (timeMatch == null) {
-                    addMessage("THOR", "Use: remind 07:30 Take my book.")
-                } else {
-                    val hour = timeMatch.groupValues[1].toIntOrNull()
-                    val minute = timeMatch.groupValues[2].toIntOrNull()
-                    val reminderText = command.substring(timeMatch.range.last + 1)
-                        .trim().trimStart('-', ':')
-                        .ifBlank { "THOR reminder" }
-                    if (hour == null || minute == null || hour !in 0..23 || minute !in 0..59) {
-                        addMessage("THOR", "That reminder time is not valid. Use 24-hour time.")
-                    } else {
-                        val reminder = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                            putExtra(AlarmClock.EXTRA_HOUR, hour)
-                            putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                            putExtra(AlarmClock.EXTRA_MESSAGE, reminderText)
-                            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                        }
-                        launchIntent(reminder, "Opening the Clock app to confirm your reminder: $reminderText")
-                    }
-                }
-            }
+            lower.startsWith("alarm ") || lower.startsWith("remind ") ||
+            lower.startsWith("reminder ") || lower.startsWith("मुझे याद ") ||
+            lower.startsWith("মনে করিয়ে ") -> scheduleReminder(command)
 
             lower in listOf("pause music", "music pause", "গান থামাও") ->
                 sendMediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE, "Sent pause to the active music player.")
@@ -776,13 +756,62 @@ private fun launchIntent(
 
 
 
+
+    private fun scheduleReminder(command: String) {
+        val relative = Regex("""(?i)in\\s+(\\d+)\\s+(minute|minutes|min|hour|hours|hr)""").find(command)
+        val timeMatch = Regex("""(\\d{1,2})[:.](\\d{2})""").find(command)
+        val message = when {
+            relative != null -> command.substring(relative.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
+            timeMatch != null -> command.substring(timeMatch.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
+            else -> ""
+        }
+        val triggerAt = when {
+            relative != null -> {
+                val amount = relative.groupValues[1].toLongOrNull() ?: 0L
+                val unit = relative.groupValues[2].lowercase(Locale.ROOT)
+                if (amount <= 0L || amount > 10080L) {
+                    addMessage("THOR", "Choose a reminder between 1 minute and 7 days from now.")
+                    return
+                }
+                System.currentTimeMillis() + amount * if (unit.startsWith("hour") || unit == "hr") 3_600_000L else 60_000L
+            }
+            timeMatch != null -> {
+                val hour = timeMatch.groupValues[1].toIntOrNull()
+                val minute = timeMatch.groupValues[2].toIntOrNull()
+                if (hour == null || minute == null || hour !in 0..23 || minute !in 0..59) {
+                    addMessage("THOR", "That time is invalid. Use 24-hour time, like 07:30.")
+                    return
+                }
+                val calendar = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, hour)
+                    set(Calendar.MINUTE, minute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                    if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+                }
+                calendar.timeInMillis
+            }
+            else -> {
+                addMessage("THOR", "Use: remind 07:30 Take my book, or remind in 10 minutes Take a break.")
+                return
+            }
+        }
+        val reminderText = message.ifBlank { "THOR reminder" }
+        ThorReminderReceiver.schedule(this, triggerAt, reminderText)
+        val whenText = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(triggerAt))
+        addMessage("THOR", "Reminder scheduled for $whenText: $reminderText. Android may delay it in battery-saving modes.")
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1003)
+    }
+
     private fun helpText(): String =
         "Try these commands:\n" +
         "• open YouTube\n" +
         "• open Settings\n" +
         "• call 9876543210 (opens dialer; you confirm)\n" +
         "• sms 9876543210 (opens SMS app)\n" +
-        "• alarm 07:30 or remind 07:30 Take my book\n" +
+        "• remind 07:30 Take my book / remind in 10 minutes Stretch\n" +
         "• hey THOR (optional wake listening while app is open)\n" +
         "• pause music / next song / previous song / volume up\n" +
         "• wifi settings / bluetooth settings\n" +
