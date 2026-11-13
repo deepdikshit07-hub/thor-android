@@ -500,6 +500,84 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         ))
         setContentView(root)
         showTab(0)
+        showStartupAnimation(contentFrame, blue, muted, background)
+    }
+
+    private fun showStartupAnimation(
+        host: android.widget.FrameLayout,
+        blue: Int,
+        muted: Int,
+        background: Int
+    ) {
+        val overlay = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(background)
+            alpha = 0f
+            isClickable = true
+            isFocusable = true
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(24, 24, 24, 24)
+        }
+        val reactor = ThorHudView(this)
+        panel.addView(reactor, LinearLayout.LayoutParams(
+            (220 * resources.displayMetrics.density).toInt(),
+            (220 * resources.displayMetrics.density).toInt()
+        ).apply { gravity = Gravity.CENTER })
+        val title = TextView(this).apply {
+            text = "THOR"
+            textSize = 34f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.28f
+            setTextColor(blue)
+            setPadding(0, 18, 0, 4)
+        }
+        panel.addView(title, matchWrap())
+        val subtitle = TextView(this).apply {
+            text = "INITIALIZING SYSTEMS"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.18f
+            setTextColor(muted)
+        }
+        panel.addView(subtitle, matchWrap())
+        val status = TextView(this).apply {
+            text = "POWERING UP  •  PLEASE WAIT"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(blue)
+            setPadding(0, 16, 0, 0)
+        }
+        panel.addView(status, matchWrap())
+        overlay.addView(panel, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        host.addView(overlay, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        ObjectAnimator.ofFloat(reactor, "rotation", 0f, 360f).apply {
+            duration = 5200L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+            start()
+        }
+        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
+            duration = 1100L
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+            start()
+        }
+        overlay.animate().alpha(1f).setDuration(450L).withEndAction {
+            Handler(Looper.getMainLooper()).postDelayed({
+                overlay.animate().alpha(0f).setDuration(550L).withEndAction {
+                    host.removeView(overlay)
+                }.start()
+            }, 1900L)
+        }.start()
     }
 
     private fun sectionLabel(value: String) = TextView(this).apply {
