@@ -1,0 +1,15 @@
+name = "thor-master-approval"
+main = "src/index.js"
+compatibility_date = "2026-11-13"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "thor-master-approval"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+FIREBASE_PROJECT_ID = "thor-ai-2791"
+
+# Configure these as Worker secrets, never in this file:
+# MASTER_UID
+# FIREBASE_SERVICE_ACCOUNT_JSON
