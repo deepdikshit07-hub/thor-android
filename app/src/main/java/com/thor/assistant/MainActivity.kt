@@ -716,7 +716,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         addMessage("THOR", "Thinking... (up to 60 seconds)")
         mainScope.launch {
             try {
-                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n\nUser: $prompt")
+                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n${learningMemory.systemContext()}\nUser: $prompt")
                 android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
                 addMessage("THOR", answer)
                 speak(answer)
