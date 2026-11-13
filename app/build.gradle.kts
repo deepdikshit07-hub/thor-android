@@ -45,4 +45,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     // On-device multilingual language model (downloaded separately from the APK).
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+    // LiteRT runtime for WeSpeaker embeddings.
+    implementation("com.google.ai.edge.litert:litert:2.1.5")
 }
