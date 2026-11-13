@@ -40,6 +40,8 @@ dependencies {
     // Firebase AI Logic: Gemini access through Firebase's secure proxy.
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-ai")
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-functions")
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
