@@ -40,4 +40,6 @@ dependencies {
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // On-device multilingual language model (downloaded separately from the APK).
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
 }
