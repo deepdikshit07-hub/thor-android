@@ -103,10 +103,9 @@ async function sendFcm(env, token, data) {
     body: JSON.stringify({
       message: {
         token,
-        notification: {
-          title: "THOR Master Mode request",
-          body: "A device is requesting Master Mode. Open THOR to review."
-        },
+        // Data-only messages are required so FirebaseMessagingService receives
+        // the message in the background and can attach the request ID to our
+        // custom notification's PendingIntent.
         data: { type: "thor_master_approval", requestId: data.requestId },
         android: { priority: "high" }
       }
