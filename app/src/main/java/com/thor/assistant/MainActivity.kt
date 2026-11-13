@@ -1,6 +1,6 @@
 package com.thor.assistant
 
-import android.app.Activity
+import androidx.fragment.app.FragmentActivity
 import android.app.AlertDialog
 import android.Manifest
 import android.content.pm.PackageManager
@@ -54,7 +54,7 @@ import java.util.Date
 import java.util.Calendar
 import java.util.Locale
 
-class MainActivity : Activity(), TextToSpeech.OnInitListener {
+class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var chat: TextView
     private lateinit var input: EditText
     private lateinit var language: Spinner
@@ -66,6 +66,25 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var bossProfile: ThorBossProfile
     private var awaitingIdentityName = false
     private var masterVerifiedThisSession = false
+    private val masterAuthStateListener = FirebaseAuth.AuthStateListener { auth ->
+        val user = auth.currentUser
+        if (user == null) {
+            masterVerifiedThisSession = false
+        } else {
+            user.getIdToken(false)
+                .addOnSuccessListener { tokenResult ->
+                    val isMaster = tokenResult.claims["thorMaster"] == true
+                    masterVerifiedThisSession = isMaster
+                    if (isMaster) {
+                        addMessage("THOR", "Master Mode session restored. It has no app-level time limit; say 'I quit' to end it.")
+                    }
+                }
+                .addOnFailureListener {
+                    masterVerifiedThisSession = false
+                    addMessage("THOR", "Master Mode could not be revalidated. Connect to the internet and try again.")
+                }
+        }
+    }
     private var bossSetupStatus: TextView? = null
     private var bossRecorder: MediaRecorder? = null
     private var bossSetupDialog: AlertDialog? = null
@@ -108,6 +127,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (firebaseReady) {
+            FirebaseAuth.getInstance().addAuthStateListener(masterAuthStateListener)
+        }
+    }
+
+    override fun onStop() {
+        if (firebaseReady) {
+            FirebaseAuth.getInstance().removeAuthStateListener(masterAuthStateListener)
+        }
+        super.onStop()
     }
 
     private fun showBossSetupIfNeeded() {
@@ -412,9 +445,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun handleIdentityName(identity: String) {
         val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
         if (normalized == "deep dikshit") {
-            showMasterModeSetupDialog()
+            val user = FirebaseAuth.getInstance().currentUser
+            if (user == null) {
+                showMasterModeSetupDialog()
+            } else {
+                user.getIdToken(false)
+                    .addOnSuccessListener { tokenResult ->
+                        if (tokenResult.claims["thorMaster"] == true) {
+                            masterVerifiedThisSession = true
+                            val message = "Welcome back, Master. Your existing Master Mode session is active."
+                            addMessage("THOR", message)
+                            speak(message)
+                        } else {
+                            showMasterModeSetupDialog()
+                        }
+                    }
+                    .addOnFailureListener {
+                        addMessage("THOR", "I couldn't verify the saved Master session. Please connect to the internet and try again.")
+                    }
+            }
         } else {
-            masterVerifiedThisSession = false
             val message = "Hello, $identity. I haven't verified you as Master."
             addMessage("THOR", message)
             speak(message)
@@ -422,7 +472,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun showMasterModeSetupDialog() {
-        masterVerifiedThisSession = false
         if (!firebaseReady) {
             val warning = "Firebase is not initialized. Check the Firebase configuration before requesting a Master verification code."
             addMessage("THOR", warning)
