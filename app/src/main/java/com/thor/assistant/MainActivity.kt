@@ -784,7 +784,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 }
                 awaitingIdentityName = false
                 val localBoss = bossProfile.bossName().ifBlank { "the local Boss" }
-                val message = "Master session ended. General Boss mode restored. Welcome back, $localBoss."
+                val message = "Master Mode sign-out requested on this device. If the approval service is offline, Device A can revoke the server session when it reconnects. General Boss mode restored, $localBoss."
                 addMessage("THOR", message)
                 speak(message)
             }
