@@ -80,12 +80,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                         masterApprovalClient.saveSessionId(sessionId)
                         mainScope.launch {
                             val active = masterApprovalClient.checkSession()
-                            masterVerifiedThisSession = active
-                            if (active) addMessage("THOR", "Master Mode restored. No app timer is set; say 'I quit' to end this device session.")
-                            else {
-                                masterApprovalClient.clearSessionId()
-                                FirebaseAuth.getInstance().signOut()
-                                addMessage("THOR", "This Master session was revoked or could not be verified. Sign in and request approval again.")
+                            masterVerifiedThisSession = active == true
+                            when (active) {
+                                true -> addMessage("THOR", "Master Mode restored. No app timer is set; say 'I quit' to end this device session.")
+                                false -> {
+                                    masterApprovalClient.clearSessionId()
+                                    FirebaseAuth.getInstance().signOut()
+                                    addMessage("THOR", "This Master session was revoked. Request approval again.")
+                                }
+                                null -> addMessage("THOR", "Network unavailable. Your saved session is retained, but Master Mode stays locked until its status can be checked.")
                             }
                         }
                     } else {
@@ -473,12 +476,16 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                         if (tokenResult.claims["thorMaster"] == true && !sessionId.isNullOrBlank()) {
                             masterApprovalClient.saveSessionId(sessionId)
                             mainScope.launch {
-                                masterVerifiedThisSession = masterApprovalClient.checkSession()
-                                val message = if (masterVerifiedThisSession) "Welcome back, Master. Your session is active."
-                                    else "That Master session is no longer valid. Request approval again."
+                                val active = masterApprovalClient.checkSession()
+                                masterVerifiedThisSession = active == true
+                                val message = when (active) {
+                                    true -> "Welcome back, Master. Your session is active."
+                                    false -> "That Master session is no longer valid. Request approval again."
+                                    null -> "I can't reach the approval service. Reconnect before using Master Mode."
+                                }
                                 addMessage("THOR", message)
                                 speak(message)
-                                if (!masterVerifiedThisSession) FirebaseAuth.getInstance().signOut()
+                                if (active == false) FirebaseAuth.getInstance().signOut()
                             }
                         } else {
                             showMasterModeSetupDialog()
@@ -830,10 +837,14 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 masterVerifiedThisSession = false
                 val endingSession = masterApprovalClient.sessionId()
                 masterApprovalClient.clearSessionId()
-                if (endingSession.isNotBlank()) mainScope.launch {
-                    try { masterApprovalClient.endSession(endingSession) } catch (_: Exception) {}
+                if (endingSession.isNotBlank()) {
+                    mainScope.launch {
+                        try { masterApprovalClient.endSession(endingSession) } catch (_: Exception) {}
+                        FirebaseAuth.getInstance().signOut()
+                    }
+                } else {
+                    FirebaseAuth.getInstance().signOut()
                 }
-                FirebaseAuth.getInstance().signOut()
                 awaitingIdentityName = false
                 val localBoss = bossProfile.bossName().ifBlank { "the local Boss" }
                 val message = "Master session ended. General Boss mode restored. Welcome back, $localBoss."
