@@ -216,6 +216,19 @@ async function handle(request, env) {
       return json(row);
     }
 
+    const denyMatch = url.pathname.match(/^\/v1\/requests\/([A-Za-z0-9_-]+)\/deny$/);
+    if (request.method === "POST" && denyMatch) {
+      if (identity.uid !== env.MASTER_UID) return json({ error: "Forbidden." }, 403);
+      const deviceId = body.deviceId;
+      await requireDevice(env, deviceId, identity.uid, "approver");
+      const now = Math.floor(Date.now() / 1000);
+      const result = await env.DB.prepare(
+        "UPDATE approval_requests SET status='denied' WHERE request_id=? AND status='pending' AND expires_at>?"
+      ).bind(denyMatch[1], now).run();
+      if (!result?.meta?.changes) return json({ error: "Request is expired or already handled." }, 410);
+      return json({ ok: true, denied: true });
+    }
+
     const approveMatch = url.pathname.match(/^\/v1\/requests\/([A-Za-z0-9_-]+)\/approve$/);
     if (request.method === "POST" && approveMatch) {
       if (identity.uid !== env.MASTER_UID) return json({ error: "Forbidden." }, 403);

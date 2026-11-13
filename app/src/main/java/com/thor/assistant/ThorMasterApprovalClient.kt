@@ -90,6 +90,9 @@ class ThorMasterApprovalClient(context: Context) {
         call("/v1/requests/$requestId/approve", "POST", JSONObject()
             .put("deviceId", deviceId).put("signatureBase64", signatureBase64))
 
+    suspend fun deny(requestId: String): JSONObject =
+        call("/v1/requests/$requestId/deny", "POST", JSONObject().put("deviceId", deviceId))
+
     suspend fun requestResult(requestId: String): JSONObject = call("/v1/requests/$requestId/result")
 
     suspend fun checkSession(): Boolean? {

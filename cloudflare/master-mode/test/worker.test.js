@@ -88,3 +88,78 @@ test("a separate Firebase UID can register as a requester", async () => {
   assert.equal(writes.length, 1);
   assert.deepEqual(await response.json(), { ok: true, deviceId: "device-test", role: "requester" });
 });
+
+
+function sessionCheckEnv(expectedDeviceId = "device-test") {
+  const env = {
+    MASTER_UID: "master-uid",
+    FIREBASE_WEB_API_KEY: "test-key",
+    DB: {
+      prepare(sql) {
+        return {
+          bind(...values) {
+            return {
+              async first() {
+                if (sql.includes("FROM devices")) {
+                  const [deviceId, uid, role] = values;
+                  return deviceId === expectedDeviceId && uid === "requester-uid" && role === "requester"
+                    ? { device_id: deviceId, firebase_uid: uid, role, revoked_at: null }
+                    : null;
+                }
+                if (sql.includes("FROM master_sessions")) {
+                  const [sessionId] = values;
+                  return sessionId === "session-test"
+                    ? { requester_uid: "requester-uid", requester_device_id: expectedDeviceId, revoked_at: null }
+                    : null;
+                }
+                return null;
+              }
+            };
+          }
+        };
+      }
+    }
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify({ users: [{ localId: "requester-uid" }] }), {
+    status: 200, headers: { "content-type": "application/json" }
+  });
+  return env;
+}
+
+test("session validation requires the registered requester device ID", async () => {
+  const env = sessionCheckEnv();
+  const response = await worker.fetch(new Request(
+    "https://thor.test/v1/sessions/session-test/check?deviceId=device-test",
+    { headers: { authorization: "Bearer test-id-token" } }
+  ), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { active: true });
+});
+
+test("a different registered device cannot use another device's Master session", async () => {
+  const env = sessionCheckEnv("other-device");
+  const response = await worker.fetch(new Request(
+    "https://thor.test/v1/sessions/session-test/check?deviceId=device-test",
+    { headers: { authorization: "Bearer test-id-token" } }
+  ), env);
+  assert.equal(response.status, 403);
+});
+
+test("session validation fails closed when the device ID is omitted", async () => {
+  const env = sessionCheckEnv();
+  const response = await worker.fetch(new Request(
+    "https://thor.test/v1/sessions/session-test/check",
+    { headers: { authorization: "Bearer test-id-token" } }
+  ), env);
+  assert.equal(response.status, 403);
+});
+
+test("oversized POST bodies are rejected before route processing", async () => {
+  const { env } = makeEnv("requester-uid");
+  const response = await worker.fetch(new Request("https://thor.test/v1/devices/register", {
+    method: "POST",
+    headers: { authorization: "Bearer test-id-token", "content-type": "application/json" },
+    body: JSON.stringify({ padding: "x".repeat(17000) })
+  }), env);
+  assert.equal(response.status, 413);
+});

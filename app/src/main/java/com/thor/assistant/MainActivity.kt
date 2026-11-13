@@ -704,7 +704,14 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                         }
                     }
                     .setNegativeButton("DENY") { _, _ ->
-                        addMessage("THOR", "Approval was not granted.")
+                        mainScope.launch {
+                            try {
+                                masterApprovalClient.deny(requestId)
+                                addMessage("THOR", "Approval request denied. No Master session was created.")
+                            } catch (error: Exception) {
+                                addMessage("THOR", "Could not record denial: ${error.message}")
+                            }
+                        }
                     }
                     .show()
             } catch (error: Exception) {
