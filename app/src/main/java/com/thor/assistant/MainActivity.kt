@@ -322,6 +322,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val lower = command.lowercase(Locale.ROOT)
 
         when {
+            // Natural compound command: "open MX Player and play/resume music".
+            Regex("""^(?:hey\\s+)?thor[, ]*(?:please\\s+)?(?:open|launch)\\s+(.+?)\\s+and\\s+(?:then\\s+)?(play|resume)(?:\\s+the)?(?:\\s+music)?$""", RegexOption.IGNORE_CASE)
+                .find(command)?.let { match ->
+                    openAppAndControlMedia(match.groupValues[1].trim(), match.groupValues[2].lowercase(Locale.ROOT))
+                } != null -> Unit
+
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
@@ -568,8 +574,24 @@ lower.startsWith("অ্যালার্ম ") -> {
                             if (waitingForWakeCommand) {
                                 waitingForWakeCommand = false
                                 handleCommand(heard)
-                            } else if (normalized.contains("hey thor") ||
-                                normalized == "thor" || normalized.startsWith("thor ")) {
+                            } else if (normalized.startsWith("hey thor ")) {
+                                val directCommand = heard.substringAfter("hey thor", "").trim().trimStart(',', ':')
+                                if (directCommand.isNotBlank()) {
+                                    handleCommand(directCommand)
+                                } else {
+                                    waitingForWakeCommand = true
+                                    addMessage("THOR", "I'm listening. Speak your command.")
+                                    speak("I'm listening")
+                                }
+                            } else if (normalized.startsWith("thor ")) {
+                                val directCommand = heard.substringAfter("thor", "").trim().trimStart(',', ':')
+                                if (directCommand.isNotBlank()) handleCommand(directCommand)
+                                else {
+                                    waitingForWakeCommand = true
+                                    addMessage("THOR", "I'm listening. Speak your command.")
+                                    speak("I'm listening")
+                                }
+                            } else if (normalized.contains("hey thor") || normalized == "thor") {
                                 waitingForWakeCommand = true
                                 addMessage("THOR", "I'm listening. Speak your command.")
                                 speak("I'm listening")
@@ -719,6 +741,48 @@ lower.startsWith("অ্যালার্ম ") -> {
                 "I am offline. I can still manage notes and tasks, open apps and settings, use the dialer, prepare SMS, set up Clock reminders, and control supported media playback. For open-ended AI answers, reconnect to the internet and check Firebase."
         }
         return reply
+    }
+
+    private fun openAppAndControlMedia(requestedName: String, action: String) {
+        val wanted = requestedName.lowercase(Locale.ROOT)
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val matches = packageManager.queryIntentActivities(launcherIntent, 0)
+        val match = matches.firstOrNull {
+            it.loadLabel(packageManager).toString().trim().equals(wanted, ignoreCase = true)
+        } ?: matches.firstOrNull {
+            it.loadLabel(packageManager).toString().lowercase(Locale.ROOT).contains(wanted)
+        }
+        if (match == null) {
+            val message = "I couldn't find $requestedName on this phone."
+            addMessage("THOR", message)
+            speak(message)
+            return
+        }
+        val launch = packageManager.getLaunchIntentForPackage(match.activityInfo.packageName)
+        if (launch == null) {
+            val message = "${match.loadLabel(packageManager)} does not provide a normal launch screen."
+            addMessage("THOR", message)
+            speak(message)
+            return
+        }
+        try {
+            startActivity(launch)
+            val verb = if (action == "resume") "resuming" else "starting"
+            val message = "Opening ${match.loadLabel(packageManager)} and $verb playback."
+            addMessage("THOR", message)
+            speak(message)
+            // Give the player time to open and publish its media session.
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    val key = if (action == "resume") KeyEvent.KEYCODE_MEDIA_PLAY else KeyEvent.KEYCODE_MEDIA_PLAY
+                    sendMediaKey(key, "Sent a play command to the active media player.")
+                }
+            }, 1400L)
+        } catch (error: Exception) {
+            val message = "I couldn't open $requestedName: ${error.message ?: "launch failed"}"
+            addMessage("THOR", message)
+            speak(message)
+        }
     }
 
     private fun openInstalledApp(requestedName: String) {
