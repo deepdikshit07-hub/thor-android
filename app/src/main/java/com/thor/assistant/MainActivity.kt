@@ -62,6 +62,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
     private lateinit var bossProfile: ThorBossProfile
+    private lateinit var masterPasscode: ThorMasterPasscode
+    private var awaitingIdentityName = false
+    private var masterVerifiedThisSession = false
     private var bossSetupStatus: TextView? = null
     private var bossRecorder: MediaRecorder? = null
     private var bossSetupDialog: AlertDialog? = null
@@ -85,6 +88,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
+        masterPasscode = ThorMasterPasscode(this)
         offlineAi = ThorOfflineAi(applicationContext)
         initializeFirebase()
         tts = TextToSpeech(this, this)
@@ -116,8 +120,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             hint = "What should THOR call you?"
             setSingleLine(true)
         }
+        val passcodeInput = EditText(this).apply {
+            hint = "Set Master passcode (minimum 6 characters)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
         val explanation = TextView(this).apply {
-            text = "Set up this installation's Boss profile. THOR will record three separate voice samples and create a local speaker template. This is experimental and still needs device-specific matching calibration."
+            text = "Set up this installation's Boss profile and Master passcode. The passcode is stored only as a salted hash on this device. The same passcode must be enrolled separately on each device until secure account sync is added. Voice matching remains experimental."
             textSize = 14f
         }
         val status = TextView(this).apply {
@@ -129,6 +138,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val finishButton = Button(this).apply { text = "FINISH WITHOUT VOICE SAMPLE" }
         panel.addView(explanation)
         panel.addView(nameInput)
+        panel.addView(passcodeInput)
         panel.addView(recordButton)
         panel.addView(status)
         panel.addView(finishButton)
@@ -146,6 +156,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 nameInput.error = "Enter the Boss name first"
                 return@setOnClickListener
             }
+            val passcode = passcodeInput.text.toString().toCharArray()
+            if (passcode.size < 6) {
+                passcodeInput.error = "Use at least 6 characters"
+                passcode.fill('\\u0000')
+                return@setOnClickListener
+            }
+            masterPasscode.setPasscode(passcode)
+            passcodeInput.text?.clear()
             bossProfile.saveBossName(name)
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 pendingBossVoiceEnrollment = true
@@ -160,6 +178,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 nameInput.error = "Enter a name to continue"
                 return@setOnClickListener
             }
+            val passcode = passcodeInput.text.toString().toCharArray()
+            if (passcode.size < 6) {
+                passcodeInput.error = "Use at least 6 characters"
+                passcode.fill('\\u0000')
+                return@setOnClickListener
+            }
+            masterPasscode.setPasscode(passcode)
+            passcodeInput.text?.clear()
             bossProfile.saveBossName(name)
             bossProfile.finishSetup()
             dialog.dismiss()
@@ -401,6 +427,69 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun handleIdentityName(identity: String) {
+        val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\\\s+"), " ")
+        if (normalized == "deep dikshit") {
+            if (!masterPasscode.isConfigured()) {
+                val message = "Master passcode has not been configured on this device."
+                addMessage("THOR", message)
+                speak(message)
+                return
+            }
+            showMasterPasscodePrompt()
+        } else {
+            masterVerifiedThisSession = false
+            val message = "Hello, $identity. I haven't verified you as Master."
+            addMessage("THOR", message)
+            speak(message)
+        }
+    }
+
+    private fun showMasterPasscodePrompt() {
+        if (masterPasscode.isLockedOut()) {
+            val message = "Master verification is temporarily locked. Try again in ${masterPasscode.remainingLockoutSeconds()} seconds."
+            addMessage("THOR", message)
+            speak(message)
+            return
+        }
+        val passcodeInput = EditText(this).apply {
+            hint = "Master passcode"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Master verification")
+            .setMessage("Enter the Master passcode to verify your identity.")
+            .setView(passcodeInput)
+            .setPositiveButton("VERIFY", null)
+            .setNegativeButton("CANCEL") { d, _ -> d.dismiss() }
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val candidate = passcodeInput.text.toString().toCharArray()
+                val valid = masterPasscode.verify(candidate)
+                passcodeInput.text?.clear()
+                if (valid) {
+                    masterVerifiedThisSession = true
+                    dialog.dismiss()
+                    val message = "Passcode accepted. Welcome back, Master."
+                    addMessage("THOR", message)
+                    speak(message)
+                } else {
+                    masterVerifiedThisSession = false
+                    val message = if (masterPasscode.isLockedOut()) {
+                        "Too many attempts. Verification is locked for 30 seconds."
+                    } else "That passcode is incorrect."
+                    passcodeInput.error = message
+                    addMessage("THOR", message)
+                    speak(message)
+                }
+            }
+        }
+        dialog.show()
+        speak("Please enter the Master passcode.")
+    }
+
     private fun startVoiceInput() {
         val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -437,7 +526,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val command = raw.trim()
         val lower = command.lowercase(Locale.ROOT)
 
+        if (awaitingIdentityName) {
+            awaitingIdentityName = false
+            handleIdentityName(command)
+            return
+        }
+
         when {
+            lower in listOf("who am i", "identify me", "what is my identity", "কে আমি", "मैं कौन हूँ") -> {
+                awaitingIdentityName = true
+                val prompt = "Please tell me your name."
+                addMessage("THOR", prompt)
+                speak(prompt)
+            }
+            lower.startsWith("my name is ") || lower.startsWith("i am ") || lower.startsWith("this is ") -> {
+                val identity = when {
+                    lower.startsWith("my name is ") -> command.substring(11).trim()
+                    lower.startsWith("i am ") -> command.substring(5).trim()
+                    else -> command.substring(8).trim()
+                }
+                handleIdentityName(identity)
+            }
             learningMemory.parseTeaching(command)?.let { learned ->
                 addMessage("THOR", learned)
                 speak(learned)
