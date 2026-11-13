@@ -42,6 +42,7 @@ dependencies {
     implementation("com.google.firebase:firebase-ai")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-functions")
+    implementation("com.google.firebase:firebase-messaging")
     // BiometricPrompt + Android Keystore-backed approval signing.
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("com.google.firebase:firebase-appcheck-debug")
