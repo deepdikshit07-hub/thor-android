@@ -175,7 +175,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setSingleLine(true)
         }
         val explanation = TextView(this).apply {
-            text = "Set up this installation's local Boss profile. Master Mode will use email verification after its secure server is configured. Voice matching remains experimental."
+            text = "Set up this installation's local Boss profile. Remote Master Mode uses Device A fingerprint approval after the secure Worker is deployed. Voice matching remains experimental."
             textSize = 14f
         }
         val status = TextView(this).apply {
