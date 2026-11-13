@@ -428,7 +428,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleIdentityName(identity: String) {
-        val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\\\s+"), " ")
+        val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
         if (normalized == "deep dikshit") {
             if (!masterPasscode.isConfigured()) {
                 val message = "Master passcode has not been configured on this device."
