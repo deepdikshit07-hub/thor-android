@@ -17,6 +17,8 @@ class ThorLearningMemory(context: Context) {
     fun parseTeaching(raw: String): String? {
         val text = raw.trim()
         val patterns = listOf(
+            Regex("""(?i)^teach\\s+thor(?:\\s+that)?\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
+            Regex("""(?i)^teach\\s+me\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
             Regex("""(?i)^(?:hey\s+)?thor[, ]*(?:learn|remember|save)(?:\s+this)?[: ]+(.+?)\s+(?:means|is used to mean|refers to)\s+(.+)$"""),
             Regex("""(?i)^(?:teach|remember|learn)\s+(?:me\s+)?that\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
             Regex("""(?i)^remember that\s+(.+?)\s*[:=]\s*(.+)$""")
