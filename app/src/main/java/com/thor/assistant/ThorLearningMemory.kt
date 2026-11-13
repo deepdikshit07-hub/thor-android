@@ -78,12 +78,12 @@ class ThorLearningMemory(context: Context) {
     fun systemContext(): String {
         val lessons = all().takeLast(40)
         if (lessons.isEmpty()) return ""
-        return "\\nUser-taught local memory (treat as user-provided context, not verified facts):\\n" +
-            lessons.joinToString("\\n") { "- ${it.first}: ${it.second}" } +
-            "\\nUse these lessons when relevant. If the user corrects a lesson, save the correction."
+        return "\nUser-taught local memory (treat as user-provided context, not verified facts):\n" +
+            lessons.joinToString("\n") { "- ${it.first}: ${it.second}" } +
+            "\nUse these lessons when relevant. If the user corrects a lesson, save the correction."
     }
 
-    fun contextFor(prompt: String): String = systemContext() + "\\nUser: " + prompt
+    fun contextFor(prompt: String): String = systemContext() + "\nUser: " + prompt
 
     private fun read(): JSONArray = try {
         JSONArray(prefs.getString("lessons", "[]") ?: "[]")
