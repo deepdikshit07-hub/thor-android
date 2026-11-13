@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import java.io.Closeable
@@ -48,6 +50,10 @@ class ThorSpeakerEngine(context: Context) : Closeable {
 
     /** Blocks for about 5 seconds. Call from a background thread. */
     fun captureEmbedding(): FloatArray {
+        check(ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            "Microphone permission is required for speaker recognition."
+        }
+
         val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -55,13 +61,17 @@ class ThorSpeakerEngine(context: Context) : Closeable {
         )
         check(minBuffer > 0) { "This device cannot open a 16 kHz microphone stream." }
 
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minBuffer, SAMPLE_COUNT * 2)
-        )
+        val recorder = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(minBuffer, SAMPLE_COUNT * 2)
+            )
+        } catch (error: SecurityException) {
+            throw IllegalStateException("Microphone permission was revoked. Grant it and try again.", error)
+        }
         check(recorder.state == AudioRecord.STATE_INITIALIZED) {
             recorder.release()
             "Microphone could not be initialized."
