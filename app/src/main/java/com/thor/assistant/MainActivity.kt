@@ -51,6 +51,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var input: EditText
     private lateinit var language: Spinner
     private lateinit var voiceStyle: Spinner
+    private lateinit var conversationStyle: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
@@ -65,6 +66,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
     private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
+    private val conversationStyles = listOf("Normal", "Casual Slang")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -135,6 +137,25 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(voiceRow, matchWrap())
+
+        conversationStyle = Spinner(this)
+        conversationStyle.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            conversationStyles
+        )
+        conversationStyle.setSelection(
+            getSharedPreferences("thor_preferences", MODE_PRIVATE)
+                .getInt("conversation_style", 0).coerceIn(0, conversationStyles.lastIndex)
+        )
+        conversationStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                getSharedPreferences("thor_preferences", MODE_PRIVATE).edit()
+                    .putInt("conversation_style", position).apply()
+            }
+        }
+        root.addView(conversationStyle, matchWrap())
 
         val scroll = ScrollView(this)
         chat = TextView(this).apply {
@@ -606,11 +627,16 @@ lower.startsWith("অ্যালার্ম ") -> {
             2 -> "Reply in natural Bengali."
             else -> "Reply in clear English."
         }
+        val styleInstruction = if (conversationStyle.selectedItemPosition == 1) {
+            "Use a relaxed, friendly, conversational tone. You may naturally use common, mild English internet slang and everyday colloquial Bengali expressions when replying in Bengali. Match the user's language and level of informality; Bengali may include natural everyday phrasing and light English-Bengali code-switching where it fits. Do not force slang into every sentence. Keep meaning clear, and avoid hateful slurs, targeted harassment, or excessive profanity."
+        } else {
+            "Use a clear, polite, neutral tone without forcing slang."
+        }
         android.util.Log.i("THOR_GEMINI", "Gemini request started")
         addMessage("THOR", "Thinking... (up to 60 seconds)")
         mainScope.launch {
             try {
-                val answer = GeminiAssistant.ask("$languageInstruction\n\nUser: $prompt")
+                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n\nUser: $prompt")
                 android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
                 addMessage("THOR", answer)
                 speak(answer)
@@ -686,6 +712,7 @@ private fun launchIntent(
         "• wifi settings / bluetooth settings\n" +
         "• what time is it\n" +
         "• search space news\n\n" +
+        "Choose Normal or Casual Slang for THOR's reply style. Casual Slang supports relaxed English and colloquial Bengali.\n" +
         "Hindi/Bengali recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
