@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -115,7 +116,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setSingleLine(true)
         }
         val explanation = TextView(this).apply {
-            text = "Set up this installation's Boss profile. Record a short voice sample and THOR will save it privately on this device. Speaker matching is not active yet in this build."
+            text = "Set up this installation's Boss profile. THOR will record three separate voice samples and create a local speaker template. This is experimental and still needs device-specific matching calibration."
             textSize = 14f
         }
         val status = TextView(this).apply {
@@ -123,7 +124,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             textSize = 13f
         }
         bossSetupStatus = status
-        val recordButton = Button(this).apply { text = "RECORD BOSS VOICE (5 SECONDS)" }
+        val recordButton = Button(this).apply { text = "ENROLL BOSS VOICE (3 × 5 SECONDS)" }
         val finishButton = Button(this).apply { text = "FINISH WITHOUT VOICE SAMPLE" }
         panel.addView(explanation)
         panel.addView(nameInput)
@@ -168,46 +169,39 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun startBossVoiceEnrollment() {
-        val sample = bossProfile.voiceSampleFile()
-        try {
-            bossRecorder?.release()
-            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(this)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }
-            bossRecorder = recorder
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            recorder.setAudioSamplingRate(16000)
-            recorder.setAudioEncodingBitRate(64000)
-            recorder.setOutputFile(sample.absolutePath)
-            recorder.prepare()
-            recorder.start()
-            bossSetupStatus?.text = "Recording... speak naturally for five seconds."
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    bossRecorder?.stop()
-                    bossRecorder?.release()
-                    bossRecorder = null
-                    bossProfile.finishSetup()
-                    bossSetupDialog?.dismiss()
-                    addMessage("THOR", "Voice sample saved privately on this device. Welcome, " + bossProfile.bossName() + ". Speaker matching still needs its verification model before I can identify voices.")
-                    speak("Welcome, Boss.")
-                } catch (error: Exception) {
-                    bossRecorder?.release()
-                    bossRecorder = null
-                    sample.delete()
-                    bossSetupStatus?.text = "Recording failed. Please try again or finish without a voice sample."
-                    android.util.Log.e("THOR_BOSS", "Voice enrollment recording failed", error)
+        if (bossProfile.bossName().isBlank()) {
+            bossSetupStatus?.text = "Enter the Boss name first."
+            return
+        }
+        bossSetupStatus?.text = "Preparing the on-device speaker model..."
+        mainScope.launch {
+            var engine: ThorSpeakerEngine? = null
+            try {
+                val samples = mutableListOf<FloatArray>()
+                engine = withContext(Dispatchers.IO) { ThorSpeakerEngine(applicationContext) }
+                repeat(3) { index ->
+                    bossSetupStatus?.text = "Sample ${index + 1} of 3: speak naturally for five seconds."
+                    speak("Voice sample ${index + 1}. Please speak naturally.")
+                    val embedding = withContext(Dispatchers.IO) { engine.captureEmbedding() }
+                    samples += embedding
                 }
-            }, 5_000L)
-        } catch (error: Exception) {
-            bossRecorder?.release()
-            bossRecorder = null
-            bossSetupStatus?.text = "Could not start recording: " + (error.message ?: "microphone unavailable") + ". Try again or finish without a sample."
+                val template = ThorSpeakerMatch().createBossTemplate(samples)
+                bossProfile.saveBossEmbedding(ThorSpeakerMatch().encode(template))
+                bossProfile.finishSetup()
+                bossSetupDialog?.dismiss()
+                addMessage(
+                    "THOR",
+                    "Three voice samples were processed on this device. Your local speaker template is saved for future verification work. Automatic Boss recognition is not enabled until the match threshold is calibrated on this phone."
+                )
+                speak("Voice profile saved. Welcome, Boss.")
+            } catch (error: Exception) {
+                bossSetupStatus?.text = "Voice enrollment failed: ${error.message ?: "model or microphone unavailable"}. You can retry or finish without a voice sample."
+                android.util.Log.e("THOR_BOSS", "Speaker embedding enrollment failed", error)
+            } finally {
+                withContext(Dispatchers.IO) {
+                    try { engine?.close() } catch (_: Exception) {}
+                }
+            }
         }
     }
 
