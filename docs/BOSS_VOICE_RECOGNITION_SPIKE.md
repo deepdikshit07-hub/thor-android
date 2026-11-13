@@ -14,9 +14,12 @@ The reference app reports Pixel 8a testing only. That is not evidence of perform
 
 ## Current experimental code
 
+- `ThorSpeakerEngine.kt` captures 5.015 seconds of 16 kHz mono PCM with Android AudioRecord, computes the upstream-compatible 80-bin Kaldi fbank frontend, and runs the 256-D WeSpeaker model through LiteRT CPU.
+- The build workflow downloads the 13.4 MB model plus the two small frontend assets from their upstream repositories and bundles them into the experimental APK.
+- First-run enrollment records three separate utterances, averages their normalized embeddings, and stores the resulting template encrypted with a device-bound Android Keystore AES-GCM key.
 - `ThorSpeakerMatch.kt` provides normalized embedding averaging, cosine similarity, and serialization.
-- `ThorBossProfile.kt` has a separate local slot for a future verified speaker embedding.
-- These are groundwork only. No speaker model inference is connected yet, no threshold is calibrated, and THOR does not currently identify a speaker.
+- The embedding is now generated on-device, but automatic matching is still deliberately disabled: no threshold has been calibrated against genuine non-owner samples on the Oppo A16, and the live command/wake audio path is not yet gated by a speaker decision.
+- The Android Keystore encryption is device-bound. It protects the local biometric template but does not make it portable to another phone.
 
 ## Why the live speech path must change
 
@@ -33,14 +36,14 @@ The current app's online/offline AI response selection can remain downstream of 
 
 ## Required before enabling automatic Boss labels
 
-- Add and verify the actual model artifact and its license/provenance; the reference build script generates the TFLite model from WeSpeaker/Pyannote source weights, it does not commit the final model artifact.
-- Port the matching Kaldi fbank frontend and test it against reference vectors.
-- Add an offline-capable multilingual ASR path for English, Hindi, and Bengali, or explicitly document language/device limitations.
-- Enroll multiple independent Boss utterances and average their embeddings.
-- Collect positive and non-Boss test utterances on the target phone, then calibrate false-accept/false-reject thresholds. Do not copy a diarization clustering threshold as an identity threshold.
+- Verify the downloaded model and frontend assets with pinned checksums in CI.
+- Compare the Kotlin fbank output and model embeddings against upstream reference vectors in automated tests.
+- Collect positive and non-owner test utterances with informed consent on the Oppo A16, then calibrate false-accept/false-reject thresholds. Do not copy a diarization clustering threshold as an identity threshold.
+- Integrate a single audio pipeline with command recognition. The current SpeechRecognizer intent does not expose the same raw PCM to the speaker model, so current voice commands are not yet speaker-gated.
 - Test sustained listening, background noise, CPU/RAM/thermal impact, and microphone lifecycle on Oppo A16.
+- For a portable Master identity, add explicit account sign-in and securely sync the encrypted profile, or implement a passphrase-protected export/import flow. Never treat a typed name alone as proof of identity.
 - Keep voice match as a convenience label, never as authentication for sensitive actions; voice replay and imitation are possible.
 
 ## Status
 
-Experimental groundwork only; no user-facing recognition is enabled. Keep this branch separate from `thor-2.0-upgrade` until the full pipeline builds and passes device tests.
+Experimental embedding extraction and three-utterance enrollment are implemented. End-to-end speaker verification is not yet enabled because threshold calibration and live audio-path integration remain. Keep this branch separate from `thor-2.0-upgrade` until the full pipeline builds and passes device tests.
