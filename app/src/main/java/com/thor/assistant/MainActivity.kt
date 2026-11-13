@@ -159,7 +159,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             val passcode = passcodeInput.text.toString().toCharArray()
             if (passcode.size < 6) {
                 passcodeInput.error = "Use at least 6 characters"
-                passcode.fill('\\u0000')
+                passcode.fill('\u0000')
                 return@setOnClickListener
             }
             masterPasscode.setPasscode(passcode)
@@ -181,7 +181,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             val passcode = passcodeInput.text.toString().toCharArray()
             if (passcode.size < 6) {
                 passcodeInput.error = "Use at least 6 characters"
-                passcode.fill('\\u0000')
+                passcode.fill('\u0000')
                 return@setOnClickListener
             }
             masterPasscode.setPasscode(passcode)
