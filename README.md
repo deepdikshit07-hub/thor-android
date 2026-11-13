@@ -15,6 +15,8 @@ This is a lightweight first-stage Android app starter for the Oppo A16 / ARM64 A
 - Open the dialer (does not place a call)
 - Open an SMS composer (does not send a message)
 - Open the alarm UI for a specified 24-hour time
+- Create a reminder by opening the Clock app with a label and time for user confirmation (`remind 07:30 Take my book`)
+- Open an installed music app (`play music`) or search YouTube for a requested track (`play <song name>`)
 - Web search using the browser
 
 ## Build without Android Studio
