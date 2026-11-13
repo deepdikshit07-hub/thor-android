@@ -62,7 +62,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
     private lateinit var bossProfile: ThorBossProfile
-    private lateinit var masterPasscode: ThorMasterPasscode
     private var awaitingIdentityName = false
     private var masterVerifiedThisSession = false
     private var bossSetupStatus: TextView? = null
@@ -88,7 +87,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
-        masterPasscode = ThorMasterPasscode(this)
         offlineAi = ThorOfflineAi(applicationContext)
         initializeFirebase()
         tts = TextToSpeech(this, this)
@@ -120,13 +118,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             hint = "What should THOR call you?"
             setSingleLine(true)
         }
-        val passcodeInput = EditText(this).apply {
-            hint = "Set Master passphrase (minimum 6 characters)"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine(true)
-        }
         val explanation = TextView(this).apply {
-            text = "Set up this installation's Boss profile and Master passcode. The passcode is stored only as a salted hash on this device. The same passcode must be enrolled separately on each device until secure account sync is added. Voice matching remains experimental."
+            text = "Set up this installation's local Boss profile. Master Mode will use email verification after its secure server is configured. Voice matching remains experimental."
             textSize = 14f
         }
         val status = TextView(this).apply {
@@ -138,7 +131,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val finishButton = Button(this).apply { text = "FINISH WITHOUT VOICE SAMPLE" }
         panel.addView(explanation)
         panel.addView(nameInput)
-        panel.addView(passcodeInput)
         panel.addView(recordButton)
         panel.addView(status)
         panel.addView(finishButton)
@@ -156,14 +148,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 nameInput.error = "Enter the Boss name first"
                 return@setOnClickListener
             }
-            val passcode = passcodeInput.text.toString().toCharArray()
-            if (passcode.size < 6) {
-                passcodeInput.error = "Use at least 6 characters"
-                passcode.fill('\u0000')
-                return@setOnClickListener
-            }
-            masterPasscode.setPasscode(passcode)
-            passcodeInput.text?.clear()
             bossProfile.saveBossName(name)
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 pendingBossVoiceEnrollment = true
@@ -304,6 +288,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(voiceRow, matchWrap())
 
+        val masterSetupButton = makeButton("MASTER MODE SETUP")
+        masterSetupButton.setOnClickListener { showMasterModeSetupDialog() }
+        root.addView(masterSetupButton, matchWrap())
+
 
         val scroll = ScrollView(this)
         chat = TextView(this).apply {
@@ -430,13 +418,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun handleIdentityName(identity: String) {
         val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
         if (normalized == "deep dikshit") {
-            if (!masterPasscode.isConfigured()) {
-                val message = "Master passcode has not been configured on this device."
-                addMessage("THOR", message)
-                speak(message)
-                return
-            }
-            showMasterPasscodePrompt()
+            showMasterModeSetupDialog()
         } else {
             masterVerifiedThisSession = false
             val message = "Hello, $identity. I haven't verified you as Master."
@@ -445,50 +427,16 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun showMasterPasscodePrompt() {
-        if (masterPasscode.isLockedOut()) {
-            val message = "Master verification is temporarily locked. Try again in ${masterPasscode.remainingLockoutSeconds()} seconds."
-            addMessage("THOR", message)
-            speak(message)
-            return
-        }
-        val passcodeInput = EditText(this).apply {
-            hint = "Master passphrase"
-            // Supports words and spaces, e.g. a private phrase chosen by the installer.
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine(true)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Master verification")
-            .setMessage("Enter the Master passcode to verify your identity.")
-            .setView(passcodeInput)
-            .setPositiveButton("VERIFY", null)
-            .setNegativeButton("CANCEL") { d, _ -> d.dismiss() }
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val candidate = passcodeInput.text.toString().toCharArray()
-                val valid = masterPasscode.verify(candidate)
-                passcodeInput.text?.clear()
-                if (valid) {
-                    masterVerifiedThisSession = true
-                    dialog.dismiss()
-                    val message = "Passcode accepted. Welcome back, Master."
-                    addMessage("THOR", message)
-                    speak(message)
-                } else {
-                    masterVerifiedThisSession = false
-                    val message = if (masterPasscode.isLockedOut()) {
-                        "Too many attempts. Verification is locked for 30 seconds."
-                    } else "That passcode is incorrect."
-                    passcodeInput.error = message
-                    addMessage("THOR", message)
-                    speak(message)
-                }
-            }
-        }
-        dialog.show()
-        speak("Please enter the Master passcode.")
+    private fun showMasterModeSetupDialog() {
+        masterVerifiedThisSession = false
+        val message = "Master account email: ${ThorMasterModeConfig.MASTER_EMAIL}\\n\\nEmail OTP sign-in is the planned verification method. The setup screen is available, but verification is not active yet: the Firebase project, secure server-side OTP function, and email delivery provider still need to be configured. No code has been sent and Master Mode cannot unlock yet."
+        AlertDialog.Builder(this)
+            .setTitle("Master Mode Setup")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
+        addMessage("THOR", "Master Mode setup opened. Registered email: ${ThorMasterModeConfig.MASTER_EMAIL}. Email OTP backend is not connected yet.")
+        speak("Master Mode setup is open. Email verification is not active yet.")
     }
 
     private fun startVoiceInput() {
