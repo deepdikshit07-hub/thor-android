@@ -63,6 +63,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
+    private lateinit var securityAudit: ThorSecurityAuditLog
     private lateinit var bossProfile: ThorBossProfile
     private var awaitingIdentityName = false
     private var masterVerifiedThisSession = false
@@ -123,6 +124,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
+        securityAudit = ThorSecurityAuditLog(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
         masterApprovalClient = ThorMasterApprovalClient(this)
@@ -338,6 +340,18 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val masterSetupButton = makeButton("MASTER MODE SETUP")
         masterSetupButton.setOnClickListener { showMasterModeSetupDialog() }
         root.addView(masterSetupButton, matchWrap())
+
+        val managementRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val memoryButton = makeButton("PERSONAL MEMORY")
+        memoryButton.setOnClickListener { showPersonalMemoryManager() }
+        val securityButton = makeButton("SECURITY CENTRE")
+        securityButton.setOnClickListener { showSecurityCentre() }
+        managementRow.addView(memoryButton, weightedButton())
+        managementRow.addView(securityButton, weightedButton())
+        root.addView(managementRow, matchWrap())
 
 
         val scroll = ScrollView(this)
@@ -779,6 +793,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         when {
             lower == "i quit" || lower == "thor i quit" -> {
                 masterVerifiedThisSession = false
+                securityAudit.record("Master Mode sign-out requested")
                 val endingSession = masterApprovalClient.sessionId()
                 masterApprovalClient.clearSessionId()
                 if (endingSession.isNotBlank()) {
@@ -796,6 +811,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 speak(message)
             }
             lower in listOf("revoke master sessions", "manage master sessions") -> showActiveMasterSessions()
+            lower in listOf("personal memory", "open memory", "memory manager", "show personal memory") -> showPersonalMemoryManager()
+            lower in listOf("security centre", "security center", "open security", "security dashboard") -> showSecurityCentre()
+            lower in listOf("security activity", "show security log") -> showSecurityActivity()
             lower in listOf("master mode status", "master status") -> {
                 val status = if (masterVerifiedThisSession) "Master Mode is active on this device." else "Master Mode is not active on this device."
                 addMessage("THOR", status)
@@ -1441,6 +1459,114 @@ private fun launchIntent(
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1003)
+    }
+
+    private fun showPersonalMemoryManager() {
+        val entries = learningMemory.all()
+        securityAudit.record("Personal memory manager opened")
+        if (entries.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Personal Memory")
+                .setMessage("No personal lessons are saved yet. Teach THOR with: teach me that 'no cap' means 'I'm being serious'.\n\nSaved lessons stay in this app's private local storage.")
+                .setPositiveButton("CLOSE", null)
+                .show()
+            return
+        }
+        val labels = entries.map { "${it.first} — ${it.second}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Personal Memory • ${entries.size} saved")
+            .setItems(labels) { _, which ->
+                val topic = entries[which].first
+                AlertDialog.Builder(this)
+                    .setTitle("Forget “$topic”?")
+                    .setMessage("This removes the selected saved lesson from this device.")
+                    .setPositiveButton("FORGET") { _, _ ->
+                        if (learningMemory.forget(topic)) {
+                            securityAudit.record("One personal memory item deleted")
+                            addMessage("THOR", "I removed that saved memory.")
+                        }
+                    }
+                    .setNegativeButton("CANCEL", null)
+                    .show()
+            }
+            .setNeutralButton("CLEAR ALL") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle("Clear all personal memory?")
+                    .setMessage("All user-taught lessons will be removed from this device. Notes and tasks are not affected.")
+                    .setPositiveButton("CLEAR") { _, _ ->
+                        learningMemory.clear()
+                        securityAudit.record("All personal memory items cleared")
+                        addMessage("THOR", "All personal memory lessons have been cleared.")
+                    }
+                    .setNegativeButton("CANCEL", null)
+                    .show()
+            }
+            .setNegativeButton("CLOSE", null)
+            .show()
+    }
+
+    private fun showSecurityCentre() {
+        val audio = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val notifications = Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val approvalKey = try { ThorDeviceApproval(this).hasKey() } catch (_: Exception) { false }
+        val session = masterApprovalClient.sessionId()
+        val sessionLabel = if (session.isBlank()) "No saved session" else "Session ID stored (••••${session.takeLast(4)})"
+        val workerLabel = if (masterApprovalClient.baseUrl.isBlank()) "Not configured" else "HTTPS endpoint configured"
+        val report = listOf(
+            "Master Mode: ${if (masterVerifiedThisSession) "verified on this app session" else "not verified"}",
+            "Remote approval service: $workerLabel",
+            "Saved Master session: $sessionLabel",
+            "Device A approval key: ${if (approvalKey) "present in Android Keystore" else "not present on this device"}",
+            "Microphone permission: ${if (audio) "granted" else "not granted"}",
+            "Notifications: ${if (notifications) "allowed or not required" else "not allowed"}",
+            "Memory storage: app-private local preferences (not end-to-end encrypted)",
+            "Security activity: stored locally on this device"
+        ).joinToString("\n\n")
+        securityAudit.record("Privacy and Security Centre opened")
+        val options = arrayOf(
+            "Review / revoke Master Mode sessions",
+            "View security activity",
+            "Open Android app permissions",
+            "Close"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("THOR • Privacy & Security")
+            .setMessage(report)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showActiveMasterSessions()
+                    1 -> showSecurityActivity()
+                    2 -> {
+                        securityAudit.record("Android app permission settings opened")
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                        launchIntent(intent, "Opening Android's THOR permission settings.")
+                    }
+                }
+            }
+            .setPositiveButton("DONE", null)
+            .show()
+    }
+
+    private fun showSecurityActivity() {
+        val events = securityAudit.events()
+        val message = if (events.isEmpty()) "No security events have been recorded yet."
+            else events.joinToString("\n\n") { "${it.first} • ${it.second}" }
+        AlertDialog.Builder(this)
+            .setTitle("Security Activity")
+            .setMessage(message)
+            .setNeutralButton("CLEAR LOG") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setMessage("Clear the local security activity history?")
+                    .setPositiveButton("CLEAR") { _, _ ->
+                        securityAudit.clear()
+                        addMessage("THOR", "Local security activity history cleared.")
+                    }
+                    .setNegativeButton("CANCEL", null)
+                    .show()
+            }
+            .setPositiveButton("CLOSE", null)
+            .show()
     }
 
     private fun helpText(): String =
