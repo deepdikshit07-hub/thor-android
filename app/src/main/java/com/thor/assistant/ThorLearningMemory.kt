@@ -17,9 +17,9 @@ class ThorLearningMemory(context: Context) {
     fun parseTeaching(raw: String): String? {
         val text = raw.trim()
         val patterns = listOf(
-            Regex("""(?i)^(?:hey\\s+)?thor[, ]*(?:learn|remember|save)(?:\\s+this)?[: ]+(.+?)\\s+(?:means|is used to mean|refers to)\\s+(.+)$"""),
-            Regex("""(?i)^(?:teach|remember|learn)\\s+(?:me\\s+)?that\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
-            Regex("""(?i)^remember that\\s+(.+?)\\s*[:=]\\s*(.+)$""")
+            Regex("""(?i)^(?:hey\s+)?thor[, ]*(?:learn|remember|save)(?:\s+this)?[: ]+(.+?)\s+(?:means|is used to mean|refers to)\s+(.+)$"""),
+            Regex("""(?i)^(?:teach|remember|learn)\s+(?:me\s+)?that\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
+            Regex("""(?i)^remember that\s+(.+?)\s*[:=]\s*(.+)$""")
         )
         val match = patterns.firstNotNullOfOrNull { it.find(text) } ?: return null
         val topic = match.groupValues[1].trim().trim('"', '\\'')
