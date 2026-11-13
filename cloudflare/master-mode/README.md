@@ -15,9 +15,9 @@ This is the server-side foundation for remote biometric approval on the free Clo
 
 A fingerprint image or fingerprint template is never uploaded. Biometrics are processed by Android.
 
-## Important current boundary
+## Current implementation boundary
 
-This directory provides the backend service and D1 schema. The Android UI, FCM token registration/service, Firebase sign-in screens, pairing/setup flow, pending-request approval screen, result polling, and remote-revocation checks still need to be connected to these endpoints. Until that Android integration is complete and tested on both phones, **Master Mode is not ready to use**. Do not enable the old email OTP flow as a security fallback; its Cloud Functions were not deployed.
+The Android branch now includes the Worker API client, Firebase Messaging notification receiver, Device A registration with a Keystore public key, Device B request/poll flow, biometric approval prompt, Firebase custom-token sign-in, session status checks, an "I quit" session-end request, and a Device A session-revocation command (`revoke master sessions`). These changes have not yet passed a fresh Android build or two-phone integration test. The Worker must be deployed and configured before these screens can work. Do not use the old email OTP flow as a security fallback; its Cloud Functions were not deployed.
 
 ## One-time Cloudflare setup
 
@@ -32,6 +32,15 @@ This directory provides the backend service and D1 schema. The Android UI, FCM t
 7. Deploy: `npm run deploy`.
 8. Test `GET https://YOUR-WORKER.workers.dev/health`. It should return `{"ok":true,"service":"thor-master-approval"}`.
 
+## Firebase account preparation
+
+1. In Firebase Console for `thor-ai-2791`, confirm Email/Password sign-in is enabled.
+2. Create one Firebase Authentication user for Device A using the trusted master email. Copy that user's **UID** and configure it as the Cloudflare `MASTER_UID` secret.
+3. Create a separate Firebase Authentication user for Device B. Device B's Firebase UID is the account that receives the custom-token Master session.
+4. Never send either account password or the service-account JSON in this chat, GitHub, or a source file. Enter account passwords only in THOR's setup dialog on the relevant phone.
+
+On Device A, open THOR > MASTER MODE SETUP, enter the Worker URL and the trusted Firebase account, then choose **SET UP DEVICE A**. On Device B, open the same dialog, enter the Worker URL and Device B Firebase account, then choose **REQUEST ON DEVICE B**. Device A receives a notification; tap it and approve only if you initiated the request.
+
 ## API outline
 
 All endpoints except `/health` require `Authorization: Bearer <Firebase ID token>`.
@@ -43,6 +52,8 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 - `POST /v1/requests/{requestId}/approve`: Device A submits `deviceId` and `signatureBase64`.
 - `GET /v1/requests/{requestId}/result`: Device B retrieves the server-issued custom token after approval.
 - `POST /v1/sessions/{sessionId}/revoke`: Device A revokes a session.
+- `GET /v1/sessions/active?deviceId=...`: Device A lists active sessions.
+- `POST /v1/sessions/{sessionId}/end`: Device B ends its own session ("I quit").
 - `GET /v1/sessions/{sessionId}/check`: Device B checks whether its session is still active.
 
 ## Deployment limitations and operational notes
