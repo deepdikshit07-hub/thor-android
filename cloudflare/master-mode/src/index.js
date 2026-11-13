@@ -58,17 +58,21 @@ async function authenticate(request, env) {
   const auth = request.headers.get("authorization") || "";
   if (!auth.startsWith("Bearer ")) throw new Error("AUTH_REQUIRED");
   const token = auth.slice(7);
-  if (token.length > 8192) throw new Error("BAD_TOKEN");
-  const response = await fetch("https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token));
+  if (token.length > 8192 || !env.FIREBASE_WEB_API_KEY) throw new Error("BAD_TOKEN");
+  // Firebase Identity Toolkit validates the Firebase ID token and returns its account UID.
+  const response = await fetch(
+    "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=" + encodeURIComponent(env.FIREBASE_WEB_API_KEY),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ idToken: token })
+    }
+  );
   if (!response.ok) throw new Error("BAD_TOKEN");
-  const claims = await response.json();
-  const now = Math.floor(Date.now() / 1000);
-  if (claims.aud !== env.FIREBASE_PROJECT_ID ||
-      claims.iss !== "https://securetoken.google.com/" + env.FIREBASE_PROJECT_ID ||
-      !claims.sub || Number(claims.exp) <= now || Number(claims.iat) > now + 60) {
-    throw new Error("BAD_TOKEN");
-  }
-  return { uid: claims.user_id || claims.sub, claims };
+  const payload = await response.json();
+  const account = payload.users?.[0];
+  if (!account?.localId || account.disabled === true) throw new Error("BAD_TOKEN");
+  return { uid: account.localId, claims: account };
 }
 
 async function sendFcm(env, token, data) {
