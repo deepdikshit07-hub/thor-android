@@ -281,7 +281,63 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
             
 lower.startsWith("alarm ") ||
-lower.startsWith("set alarm ") ||
+
+            lower.startsWith("remind ") || lower.startsWith("reminder ") ||
+                lower.startsWith("मुझे याद ") || lower.startsWith("মনে করিয়ে ") -> {
+                // Format: remind 07:30 Take my book. The Clock app asks the
+                // user to confirm; THOR does not silently schedule an alarm.
+                val timeMatch = Regex("""(\\d{1,2})[:.](\\d{2})""").find(command)
+                if (timeMatch == null) {
+                    addMessage("THOR", "Use: remind 07:30 Take my book.")
+                } else {
+                    val hour = timeMatch.groupValues[1].toIntOrNull()
+                    val minute = timeMatch.groupValues[2].toIntOrNull()
+                    val reminderText = command.substring(timeMatch.range.last + 1)
+                        .trim().trimStart('-', ':')
+                        .ifBlank { "THOR reminder" }
+                    if (hour == null || minute == null || hour !in 0..23 || minute !in 0..59) {
+                        addMessage("THOR", "That reminder time is not valid. Use 24-hour time.")
+                    } else {
+                        val reminder = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                            putExtra(AlarmClock.EXTRA_HOUR, hour)
+                            putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                            putExtra(AlarmClock.EXTRA_MESSAGE, reminderText)
+                            putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        }
+                        launchIntent(reminder, "Opening the Clock app to confirm your reminder: $reminderText")
+                    }
+                }
+            }
+
+            lower == "play music" || lower == "open music" ||
+                lower == "গান চালাও" || lower == "म्यूजिक चलाओ" -> {
+                val candidates = listOf("YouTube Music", "Spotify", "Music")
+                val opened = candidates.any { candidate ->
+                    val wanted = candidate.lowercase(Locale.ROOT)
+                    val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                    val match = packageManager.queryIntentActivities(launcher, 0).firstOrNull {
+                        it.loadLabel(packageManager).toString().lowercase(Locale.ROOT).contains(wanted)
+                    }
+                    val launch = match?.let {
+                        packageManager.getLaunchIntentForPackage(it.activityInfo.packageName)
+                    }
+                    if (launch != null) {
+                        launchIntent(launch, "Opening ${match.loadLabel(packageManager)}.")
+                        true
+                    } else false
+                }
+                if (!opened) addMessage("THOR", "No supported music app was found. Install a music app or say: play followed by a song name.")
+            }
+
+            lower.startsWith("play ") || lower.startsWith("গান ") || lower.startsWith("बजाओ ") -> {
+                val query = command.substringAfter(' ').trim()
+                if (query.isNotBlank()) {
+                    val url = "https://www.youtube.com/results?search_query=${Uri.encode(query)}"
+                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse(url)), "Searching for $query. Choose a result to play.")
+                } else addMessage("THOR", "Say: play followed by a song name.")
+            }
+
+            lower.startsWith("set alarm ") ||
 lower.startsWith("अलार्म ") ||
 lower.startsWith("অ্যালার্ম ") -> {
 
