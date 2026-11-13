@@ -1,0 +1,14 @@
+{
+  "name": "thor-master-approval",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create thor-master-approval",
+    "db:migrate:remote": "wrangler d1 execute thor-master-approval --remote --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
