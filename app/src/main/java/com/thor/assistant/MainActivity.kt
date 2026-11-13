@@ -211,23 +211,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    @Deprecated("Legacy permission callback is used to avoid an extra AndroidX dependency.")
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 1004 && pendingBossVoiceEnrollment) {
-            pendingBossVoiceEnrollment = false
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-                startBossVoiceEnrollment()
-            } else {
-                bossSetupStatus?.text = "Microphone permission was not granted. You can allow it in Android settings and try again, or finish without a voice sample."
-            }
-        }
-    }
-
     private fun buildScreen() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -797,16 +780,29 @@ lower.startsWith("অ্যালার্ম ") -> {
         wakeRecognizer = null
     }
 
+    @Deprecated("Legacy permission callback is used to avoid an extra AndroidX dependency.")
     override fun onRequestPermissionsResult(
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 1002) {
-            val button = wakeButton ?: return
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startWakeWord(button)
-            } else {
-                addMessage("THOR", "Microphone permission is required for wake listening.")
+        when (requestCode) {
+            1002 -> {
+                val button = wakeButton ?: return
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    startWakeWord(button)
+                } else {
+                    addMessage("THOR", "Microphone permission is required for wake listening.")
+                }
+            }
+            1004 -> {
+                if (pendingBossVoiceEnrollment) {
+                    pendingBossVoiceEnrollment = false
+                    if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                        startBossVoiceEnrollment()
+                    } else {
+                        bossSetupStatus?.text = "Microphone permission was not granted. You can allow it in Android settings and try again, or finish without a voice sample."
+                    }
+                }
             }
         }
     }
