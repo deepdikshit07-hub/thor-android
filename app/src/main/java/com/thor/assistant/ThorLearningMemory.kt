@@ -24,7 +24,7 @@ class ThorLearningMemory(context: Context) {
             Regex("""(?i)^remember that\s+(.+?)\s*[:=]\s*(.+)$""")
         )
         val match = patterns.firstNotNullOfOrNull { it.find(text) } ?: return null
-        val topic = match.groupValues[1].trim().trim('"', '\\'')
+        val topic = match.groupValues[1].trim().trim('"', '\'')
         val meaning = match.groupValues[2].trim().trimEnd('.', '!')
         if (topic.isBlank() || meaning.isBlank() || topic.length > 100 || meaning.length > 500) {
             return "That lesson is too long or incomplete. Try: teach me that 'no cap' means 'I'm being serious'."
