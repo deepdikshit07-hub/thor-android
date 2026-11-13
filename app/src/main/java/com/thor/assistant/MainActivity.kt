@@ -323,7 +323,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         when {
             // Natural compound command: "open MX Player and play/resume music".
-            Regex("""^(?:hey\\s+)?thor[, ]*(?:please\\s+)?(?:open|launch)\\s+(.+?)\\s+and\\s+(?:then\\s+)?(play|resume)(?:\\s+the)?(?:\\s+music)?$""", RegexOption.IGNORE_CASE)
+            Regex("""^(?:hey\s+)?thor[, ]*(?:please\s+)?(?:open|launch)\s+(.+?)\s+and\s+(?:then\s+)?(play|resume)(?:\s+the)?(?:\s+music)?$""", RegexOption.IGNORE_CASE)
                 .find(command)?.let { match ->
                     openAppAndControlMedia(match.groupValues[1].trim(), match.groupValues[2].lowercase(Locale.ROOT))
                 } != null -> Unit
