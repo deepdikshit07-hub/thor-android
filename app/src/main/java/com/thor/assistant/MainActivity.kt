@@ -337,9 +337,9 @@ lower.startsWith("অ্যালার্ম ") -> {
 
             else -> {
                 respond(
-                    "I can handle basic phone commands offline. Online AI chat will be added in the next stage.",
-                    "मैं अभी कुछ बुनियादी फोन कमांड ऑफलाइन कर सकता हूँ। ऑनलाइन AI अगले चरण में जोड़ा जाएगा।",
-                    "আমি এখন কিছু সাধারণ ফোন কমান্ড অফলাইনে করতে পারি। পরের ধাপে অনলাইন AI যোগ হবে।"
+                    "I can help with questions too. Try: ask followed by your question, or type help to see my commands.",
+                    "मैं सवालों के जवाब भी दे सकता हूँ। अपने सवाल से पहले ask लिखें या help लिखें।",
+                    "আমি প্রশ্নের উত্তরও দিতে পারি। প্রশ্নের আগে ask লিখুন, অথবা help লিখুন।"
                 )
             }
         }
@@ -373,7 +373,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             else -> "Reply in clear English."
         }
         android.util.Log.i("THOR_GEMINI", "Gemini request started")
-        addMessage("THOR", "Thinking... (30 second limit)")
+        addMessage("THOR", "Thinking... (up to 60 seconds)")
         mainScope.launch {
             try {
                 val answer = GeminiAssistant.ask("$languageInstruction\n\nUser: $prompt")
