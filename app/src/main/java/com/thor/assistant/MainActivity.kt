@@ -121,8 +121,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setSingleLine(true)
         }
         val passcodeInput = EditText(this).apply {
-            hint = "Set Master passcode (minimum 6 characters)"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "Set Master passphrase (minimum 6 characters)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
         }
         val explanation = TextView(this).apply {
