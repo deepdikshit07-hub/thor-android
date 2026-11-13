@@ -435,13 +435,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 openInstalledApp(appName)
             }
 
-            else -> {
-                respond(
-                    "I can help with questions too. Try: ask followed by your question, or type help to see my commands.",
-                    "मैं सवालों के जवाब भी दे सकता हूँ। अपने सवाल से पहले ask लिखें या help लिखें।",
-                    "আমি প্রশ্নের উত্তরও দিতে পারি। প্রশ্নের আগে ask লিখুন, অথবা help লিখুন।"
-                )
-            }
+            else -> askGemini(command)
         }
     }
 
@@ -576,7 +570,9 @@ lower.startsWith("অ্যালার্ম ") -> {
 
     private fun askGemini(prompt: String) {
         if (!firebaseReady) {
-            addMessage("THOR", "Online AI is not ready. Check Firebase setup and try again.")
+            val offline = offlineReply(prompt)
+            addMessage("THOR", offline)
+            speak(offline)
             return
         }
         val languageInstruction = when (language.selectedItemPosition) {
@@ -595,8 +591,25 @@ lower.startsWith("অ্যালার্ম ") -> {
             } catch (error: Exception) {
                 android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
                 val detail = error.message ?: error.javaClass.simpleName
-                addMessage("THOR", "Gemini error: $detail")
+                val offline = offlineReply(prompt)
+                addMessage("THOR", "Online AI unavailable ($detail). Offline mode: $offline")
+                speak(offline)
             }
+        }
+    }
+
+    private fun offlineReply(prompt: String): String {
+        val query = prompt.lowercase(Locale.ROOT)
+        return when {
+            query.contains("hello") || query == "hi" || query.contains("नमस्ते") ||
+                query.contains("হ্যালো") -> "Hello. THOR is ready. I can run your local phone commands offline."
+            query.contains("time") || query.contains("समय") || query.contains("সময়") ->
+                "The time is " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            query.contains("date") || query.contains("तारीख") || query.contains("তারিখ") ->
+                "Today's date is " + SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date())
+            query.contains("your name") || query.contains("who are you") ->
+                "I am THOR, your personal Android assistant."
+            else -> "I am offline. I can still manage notes and tasks, open apps and settings, use the dialer, prepare SMS, set up Clock reminders, and control supported media playback. For open-ended AI answers, reconnect to the internet and check Firebase."
         }
     }
 
