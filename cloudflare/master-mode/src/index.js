@@ -73,7 +73,8 @@ async function authenticate(request, env) {
 
 async function sendFcm(env, token, data) {
   const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
-  if (!account.client_email || !account.private_key || !account.project_id) throw new Error("FCM_CONFIG");
+  if (!account.client_email || !account.private_key || !account.project_id ||
+      account.project_id !== env.FIREBASE_PROJECT_ID) throw new Error("FCM_CONFIG");
   const now = Math.floor(Date.now() / 1000);
   const assertion = await signJwt({
     iss: account.client_email,
