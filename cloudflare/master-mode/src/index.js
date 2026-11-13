@@ -10,6 +10,29 @@ const b64url = (bytes) => {
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 };
 const utf8 = (value) => new TextEncoder().encode(value);
+const derEcdsaToRaw = (der) => {
+  // Android Signature returns ASN.1 DER; WebCrypto ECDSA verify expects fixed-width r||s.
+  if (der.length < 8 || der[0] !== 0x30) throw new Error("BAD_SIGNATURE");
+  let offset = 2;
+  if (der[1] & 0x80) {
+    const count = der[1] & 0x7f;
+    if (count < 1 || count > 2 || der.length < 2 + count) throw new Error("BAD_SIGNATURE");
+    offset = 2 + count;
+  }
+  if (der[offset++] !== 0x02) throw new Error("BAD_SIGNATURE");
+  const rLen = der[offset++];
+  const r = der.slice(offset, offset + rLen); offset += rLen;
+  if (der[offset++] !== 0x02) throw new Error("BAD_SIGNATURE");
+  const sLen = der[offset++];
+  const s = der.slice(offset, offset + sLen);
+  const trim = (v) => v.length > 32 && v[0] === 0 ? v.slice(1) : v;
+  const rr = trim(r), ss = trim(s);
+  if (rr.length > 32 || ss.length > 32) throw new Error("BAD_SIGNATURE");
+  const raw = new Uint8Array(64);
+  raw.set(rr, 32 - rr.length);
+  raw.set(ss, 64 - ss.length);
+  return raw;
+};
 const randomId = (bytes = 24) => {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
   return b64url(data);
@@ -203,19 +226,22 @@ async function handle(request, env) {
         "spki", Uint8Array.from(atob(device.public_key_b64), c => c.charCodeAt(0)),
         { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
       );
-      const signature = Uint8Array.from(atob(signatureBase64), c => c.charCodeAt(0));
+      const derSignature = Uint8Array.from(atob(signatureBase64), c => c.charCodeAt(0));
+      const signature = derEcdsaToRaw(derSignature);
       const valid = await crypto.subtle.verify(
         { name: "ECDSA", hash: "SHA-256" }, publicKey, signature, utf8(row.challenge)
       );
       if (!valid) return json({ error: "Fingerprint approval signature did not verify." }, 403);
       const sessionId = randomId(24);
-      const updated = await env.DB.prepare(
-        "UPDATE approval_requests SET status='approved',approved_at=?,session_id=?,signature_b64=? WHERE request_id=? AND status='pending' AND expires_at>?"
-      ).bind(now, sessionId, signatureBase64, row.request_id, now).run();
-      if (!updated.meta?.changes) return json({ error: "Request was already consumed." }, 409);
-      await env.DB.prepare(
-        "INSERT INTO master_sessions(session_id,request_id,requester_uid,requester_device_id,created_at) VALUES(?,?,?,?,?)"
-      ).bind(sessionId, row.request_id, row.requester_uid, row.requester_device_id, now).run();
+      const results = await env.DB.batch([
+        env.DB.prepare(
+          "UPDATE approval_requests SET status='approved',approved_at=?,session_id=?,signature_b64=? WHERE request_id=? AND status='pending' AND expires_at>?"
+        ).bind(now, sessionId, signatureBase64, row.request_id, now),
+        env.DB.prepare(
+          "INSERT INTO master_sessions(session_id,request_id,requester_uid,requester_device_id,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM approval_requests WHERE request_id=? AND status='approved' AND session_id=?)"
+        ).bind(sessionId, row.request_id, row.requester_uid, row.requester_device_id, now, row.request_id, sessionId)
+      ]);
+      if (!results[0]?.meta?.changes || !results[1]?.meta?.changes) return json({ error: "Request was already consumed." }, 409);
       return json({ ok: true, sessionId });
     }
 
