@@ -27,6 +27,11 @@ class ThorSpeakerEngine(context: Context) : Closeable {
     private val fbank = ThorFbank(appContext)
     private val runtime = run {
         val modelFile = File(appContext.filesDir, MODEL_FILE)
+        if (!modelFile.exists() || modelFile.length() < 10_000_000L) {
+            appContext.assets.open(MODEL_FILE).use { source ->
+                modelFile.outputStream().use { target -> source.copyTo(target) }
+            }
+        }
         require(modelFile.exists() && modelFile.length() > 10_000_000L) {
             "Speaker model is missing. Reinstall the current THOR build."
         }
