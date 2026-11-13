@@ -51,7 +51,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var input: EditText
     private lateinit var language: Spinner
     private lateinit var voiceStyle: Spinner
-    private lateinit var conversationStyle: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
@@ -66,7 +65,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
     private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
-    private val conversationStyles = listOf("Normal", "Casual Slang")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -138,24 +136,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(voiceRow, matchWrap())
 
-        conversationStyle = Spinner(this)
-        conversationStyle.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            conversationStyles
-        )
-        conversationStyle.setSelection(
-            getSharedPreferences("thor_preferences", MODE_PRIVATE)
-                .getInt("conversation_style", 0).coerceIn(0, conversationStyles.lastIndex)
-        )
-        conversationStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                getSharedPreferences("thor_preferences", MODE_PRIVATE).edit()
-                    .putInt("conversation_style", position).apply()
-            }
-        }
-        root.addView(conversationStyle, matchWrap())
 
         val scroll = ScrollView(this)
         chat = TextView(this).apply {
@@ -627,11 +607,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             2 -> "Reply in natural Bengali."
             else -> "Reply in clear English."
         }
-        val styleInstruction = if (conversationStyle.selectedItemPosition == 1) {
-            "Use a relaxed, friendly, conversational tone. You may naturally use common, mild English internet slang and everyday colloquial Bengali expressions when replying in Bengali. Match the user's language and level of informality; Bengali may include natural everyday phrasing and light English-Bengali code-switching where it fits. Do not force slang into every sentence. Keep meaning clear, and avoid hateful slurs, targeted harassment, or excessive profanity."
-        } else {
-            "Use a clear, polite, neutral tone without forcing slang."
-        }
+        val styleInstruction = "Automatically match the user's language and level of informality in every reply. If the user writes in casual English, internet slang, Bengali colloquial language, or Bengali-English mix, reply naturally in that same casual register and language. Understand common everyday slang and informal spellings; do not lecture the user about slang or unnecessarily correct it. Use slang naturally rather than forcing it into every sentence. Keep replies clear and avoid hateful slurs or targeted harassment."
         android.util.Log.i("THOR_GEMINI", "Gemini request started")
         addMessage("THOR", "Thinking... (up to 60 seconds)")
         mainScope.launch {
@@ -652,17 +628,44 @@ lower.startsWith("অ্যালার্ম ") -> {
 
     private fun offlineReply(prompt: String): String {
         val query = prompt.lowercase(Locale.ROOT)
-        return when {
-            query.contains("hello") || query == "hi" || query.contains("नमस्ते") ||
-                query.contains("হ্যালো") -> "Hello. THOR is ready. I can run your local phone commands offline."
-            query.contains("time") || query.contains("समय") || query.contains("সময়") ->
-                "The time is " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
-            query.contains("date") || query.contains("तारीख") || query.contains("তারিখ") ->
-                "Today's date is " + SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date())
-            query.contains("your name") || query.contains("who are you") ->
-                "I am THOR, your personal Android assistant."
-            else -> "I am offline. I can still manage notes and tasks, open apps and settings, use the dialer, prepare SMS, set up Clock reminders, and control supported media playback. For open-ended AI answers, reconnect to the internet and check Firebase."
+        val casualEnglish = listOf(
+            "bro", "bruh", "dude", "lol", "lmao", "rofl", "fr", "ngl",
+            "idk", "ikr", "btw", "omg", "yo", "sup", "gonna", "wanna"
+        )
+        val casualBengali = listOf(
+            "ভাই", "দোস্ত", "বন্ধু", "কিরে", "ধুর", "জোস", "দারুণ",
+            "ফাটাফাটি", "কি অবস্থা", "কী অবস্থা", "বস", "আরে",
+            "bhai", "dost", "bondhu", "ki re", "dhur", "darun", "joss"
+        )
+        val isCasual = casualEnglish.any { query.contains(it) } ||
+            casualBengali.any { query.contains(it) }
+        val bengaliInput = query.any { it in '\u0980'..'\u09FF' } ||
+            listOf("bhai", "dost", "bondhu", "ki re", "dhur", "darun", "joss")
+                .any { query.contains(it) }
+
+        val reply = when {
+            query.contains("hello") || query == "hi" || query.contains("নমস্কার") ||
+                query.contains("হ্যালো") || query.contains("নমস্তে") ->
+                if (bengaliInput) "ওই! THOR রেডি আছে। বলো, কী দরকার?"
+                else "Yo! THOR's ready. What's up?"
+            query.contains("time") || query.contains("সময়") || query.contains("সময়") ->
+                if (bengaliInput) "এখন সময় " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()) + "।"
+                else "It's " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()) + " right now."
+            query.contains("date") || query.contains("তারিখ") ->
+                if (bengaliInput) "আজ " + SimpleDateFormat("dd MMMM yyyy", Locale("bn", "IN")).format(Date()) + "।"
+                else "Today's date is " + SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date()) + "."
+            query.contains("your name") || query.contains("who are you") ||
+                query.contains("তোর নাম") || query.contains("তোমার নাম") ->
+                if (bengaliInput) "আমি THOR, তোর ফোনের assistant. কীভাবে help করব?"
+                else "I'm THOR, your assistant. What do you need?"
+            isCasual && bengaliInput ->
+                "বুঝেছি ভাই! আমি এখন offline আছি, তাই সব প্রশ্নের AI-level উত্তর দিতে পারব না। তবে notes, tasks, apps আর phone-এর supported controls চালাতে পারি।"
+            isCasual ->
+                "Gotcha, bro. I'm offline right now, so I can't give a full AI answer. But I can still handle notes, tasks, apps, and supported phone controls."
+            else ->
+                "I am offline. I can still manage notes and tasks, open apps and settings, use the dialer, prepare SMS, set up Clock reminders, and control supported media playback. For open-ended AI answers, reconnect to the internet and check Firebase."
         }
+        return reply
     }
 
     private fun openInstalledApp(requestedName: String) {
@@ -712,7 +715,6 @@ private fun launchIntent(
         "• wifi settings / bluetooth settings\n" +
         "• what time is it\n" +
         "• search space news\n\n" +
-        "Choose Normal or Casual Slang for THOR's reply style. Casual Slang supports relaxed English and colloquial Bengali.\n" +
         "Hindi/Bengali recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
