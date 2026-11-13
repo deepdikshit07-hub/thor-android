@@ -812,13 +812,13 @@ private fun launchIntent(
         "• call 9876543210 (opens dialer; you confirm)\n" +
         "• sms 9876543210 (opens SMS app)\n" +
         "• remind 07:30 Take my book / remind in 10 minutes Stretch\n" +
-        "• hey THOR (optional wake listening while app is open)\n" +
+        "• hey THOR (visible wake listening while THOR is open)\n" +
         "• pause music / next song / previous song / volume up\n" +
         "• wifi settings / bluetooth settings\n" +
         "• what time is it\n" +
         "• search space news\n" +
         "• install offline AI for open-ended offline chat\n\n" +
-        "The offline language model is a separate ~586 MB download. Hindi/Bengali speech recognition depends on the installed speech service."
+        "The offline language model is bundled into the APK build (~586 MB). Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
         val answer = when (language.selectedItemPosition) {
