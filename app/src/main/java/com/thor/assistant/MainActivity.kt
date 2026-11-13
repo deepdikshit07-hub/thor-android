@@ -1,6 +1,14 @@
 package com.thor.assistant
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.view.KeyEvent
+import android.speech.RecognitionListener
+import android.speech.SpeechRecognizer
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
@@ -47,6 +55,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var localStore: ThorLocalStore
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
+    private var wakeRecognizer: SpeechRecognizer? = null
+    private val wakeHandler = Handler(Looper.getMainLooper())
+    private var wakeEnabled = false
+    private var waitingForWakeCommand = false
+    private var wakeButton: Button? = null
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
@@ -135,13 +148,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         mic.setOnClickListener { startVoiceInput() }
 
         val help = makeButton("HELP")
-        help.setOnClickListener {
-            addMessage("THOR", helpText())
-        }
+        help.setOnClickListener { addMessage("THOR", helpText()) }
+        val wake = makeButton("WAKE: OFF")
+        wakeButton = wake
+        wake.setOnClickListener { toggleWakeWord(wake) }
 
         buttons.addView(send, weightedButton())
         buttons.addView(mic, weightedButton())
         buttons.addView(help, weightedButton())
+        buttons.addView(wake, weightedButton())
         root.addView(buttons, matchWrap())
 
         setContentView(root)
@@ -253,6 +268,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 respond("Today's date is $date.", "आज की तारीख $date है।", "আজকের তারিখ $date।")
             }
 
+            lower in listOf("wifi settings", "open wifi", "ওয়াইফাই সেটিংস") ->
+                launchIntent(Intent(Settings.ACTION_WIFI_SETTINGS), "Opening Wi-Fi settings.")
+            lower in listOf("bluetooth settings", "open bluetooth", "ব্লুটুথ সেটিংস") ->
+                launchIntent(Intent(Settings.ACTION_BLUETOOTH_SETTINGS), "Opening Bluetooth settings.")
+            lower in listOf("display settings", "open display settings") ->
+                launchIntent(Intent(Settings.ACTION_DISPLAY_SETTINGS), "Opening display settings.")
+            lower in listOf("battery settings", "open battery settings") ->
+                launchIntent(Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS), "Opening battery settings.")
             lower == "open settings" || lower.contains("settings kholo") ||
                 lower.contains("सेटिंग") || lower.contains("সেটিংস") -> {
                 launchIntent(Intent(Settings.ACTION_SETTINGS), "Opening Settings.")
@@ -270,13 +293,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
 
             lower.startsWith("sms ") || lower.startsWith("message ") -> {
-                val number = command.substringAfter(' ').filter { it.isDigit() || it == '+' }
+                val payload = command.substringAfter(' ').trim()
+                val number = payload.takeWhile { it.isDigit() || it == '+' }
+                val body = payload.drop(number.length).trim()
                 if (number.isNotBlank()) {
-                    launchIntent(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")),
-                        "Opening your SMS app. Review and send the message yourself.")
-                } else {
-                    addMessage("THOR", "Use: sms followed by a phone number.")
-                }
+                    val sms = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).apply {
+                        if (body.isNotBlank()) putExtra("sms_body", body)
+                    }
+                    launchIntent(sms, "Opening SMS. Review the number and message before sending.")
+                } else addMessage("THOR", "Use: sms 9876543210 Hello there")
             }
 
             
@@ -286,7 +311,7 @@ lower.startsWith("alarm ") ||
                 lower.startsWith("मुझे याद ") || lower.startsWith("মনে করিয়ে ") -> {
                 // Format: remind 07:30 Take my book. The Clock app asks the
                 // user to confirm; THOR does not silently schedule an alarm.
-                val timeMatch = Regex("""(\\d{1,2})[:.](\\d{2})""").find(command)
+                val timeMatch = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
                 if (timeMatch == null) {
                     addMessage("THOR", "Use: remind 07:30 Take my book.")
                 } else {
@@ -307,6 +332,25 @@ lower.startsWith("alarm ") ||
                         launchIntent(reminder, "Opening the Clock app to confirm your reminder: $reminderText")
                     }
                 }
+            }
+
+            lower in listOf("pause music", "music pause", "গান থামাও") ->
+                sendMediaKey(KeyEvent.KEYCODE_MEDIA_PAUSE, "Sent pause to the active music player.")
+            lower in listOf("resume music", "continue music") ->
+                sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY, "Sent play to the active music player.")
+            lower in listOf("next song", "next track", "পরের গান") ->
+                sendMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT, "Skipped to the next track.")
+            lower in listOf("previous song", "previous track", "আগের গান") ->
+                sendMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS, "Returned to the previous track.")
+            lower in listOf("volume up", "ভলিউম বাড়াও") -> {
+                val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+                audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+                addMessage("THOR", "Media volume increased.")
+            }
+            lower in listOf("volume down", "ভলিউম কমাও") -> {
+                val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+                audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+                addMessage("THOR", "Media volume decreased.")
             }
 
             lower == "play music" || lower == "open music" ||
@@ -401,6 +445,118 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
+    /**
+     * Optional wake listening works only while this screen is visible.
+     * THOR does not keep the microphone active in the background.
+     */
+    private fun toggleWakeWord(button: Button) {
+        if (wakeEnabled) {
+            stopWakeWord()
+            button.text = "WAKE: OFF"
+            addMessage("THOR", "Wake listening stopped.")
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            addMessage("THOR", "No speech-recognition service is available.")
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1002)
+            return
+        }
+        startWakeWord(button)
+    }
+
+    private fun startWakeWord(button: Button) {
+        wakeEnabled = true
+        waitingForWakeCommand = false
+        button.text = "WAKE: ON"
+        addMessage("THOR", "Wake listening is active only while THOR stays open. Say Hey THOR, then your command.")
+        if (wakeRecognizer == null) {
+            wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer ->
+                recognizer.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {}
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                    override fun onPartialResults(partialResults: Bundle?) {}
+                    override fun onError(error: Int) { scheduleWakeListening(900L) }
+                    override fun onResults(results: Bundle?) {
+                        val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()?.trim().orEmpty()
+                        if (heard.isNotBlank()) {
+                            val normalized = heard.lowercase(Locale.ROOT)
+                            if (waitingForWakeCommand) {
+                                waitingForWakeCommand = false
+                                handleCommand(heard)
+                            } else if (normalized.contains("hey thor") ||
+                                normalized == "thor" || normalized.startsWith("thor ")) {
+                                waitingForWakeCommand = true
+                                addMessage("THOR", "I'm listening. Speak your command.")
+                                speak("I'm listening")
+                            }
+                        }
+                        scheduleWakeListening(500L)
+                    }
+                })
+            }
+        }
+        scheduleWakeListening(250L)
+    }
+
+    private fun scheduleWakeListening(delayMs: Long) {
+        wakeHandler.removeCallbacksAndMessages(null)
+        if (!wakeEnabled || isFinishing || isDestroyed) return
+        wakeHandler.postDelayed({
+            if (!wakeEnabled) return@postDelayed
+            try {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTags.getOrElse(language.selectedItemPosition) { "en-IN" })
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra("android.speech.extra.PREFER_OFFLINE", true)
+                }
+                wakeRecognizer?.startListening(intent)
+            } catch (error: Exception) {
+                addMessage("THOR", "Wake listening stopped: ${error.message ?: "speech service unavailable"}")
+                stopWakeWord()
+                wakeButton?.text = "WAKE: OFF"
+            }
+        }, delayMs)
+    }
+
+    private fun stopWakeWord() {
+        wakeEnabled = false
+        waitingForWakeCommand = false
+        wakeHandler.removeCallbacksAndMessages(null)
+        try { wakeRecognizer?.cancel() } catch (_: Exception) {}
+        wakeRecognizer?.destroy()
+        wakeRecognizer = null
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1002) {
+            val button = wakeButton ?: return
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startWakeWord(button)
+            } else {
+                addMessage("THOR", "Microphone permission is required for wake listening.")
+            }
+        }
+    }
+
+    private fun sendMediaKey(keyCode: Int, label: String) {
+        val audio = getSystemService(AUDIO_SERVICE) as AudioManager
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        addMessage("THOR", label)
+    }
+
     private fun initializeFirebase() {
         try {
             Firebase.initialize(context = this)
@@ -485,7 +641,10 @@ private fun launchIntent(
         "• open Settings\n" +
         "• call 9876543210 (opens dialer; you confirm)\n" +
         "• sms 9876543210 (opens SMS app)\n" +
-        "• alarm 07:30\n" +
+        "• alarm 07:30 or remind 07:30 Take my book\n" +
+        "• hey THOR (optional wake listening while app is open)\n" +
+        "• pause music / next song / previous song / volume up\n" +
+        "• wifi settings / bluetooth settings\n" +
         "• what time is it\n" +
         "• search space news\n\n" +
         "Hindi/Bengali recognition depends on the installed speech service."
@@ -531,7 +690,14 @@ private fun launchIntent(
         }
     }
 
+    override fun onPause() {
+        stopWakeWord()
+        wakeButton?.text = "WAKE: OFF"
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        stopWakeWord()
         tts?.stop()
         tts?.shutdown()
         mainScope.cancel()
