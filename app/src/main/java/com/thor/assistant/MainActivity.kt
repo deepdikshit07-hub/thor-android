@@ -178,11 +178,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             var engine: ThorSpeakerEngine? = null
             try {
                 val samples = mutableListOf<FloatArray>()
-                engine = withContext(Dispatchers.IO) { ThorSpeakerEngine(applicationContext) }
+                val speakerEngine = withContext(Dispatchers.IO) { ThorSpeakerEngine(applicationContext) }
+                engine = speakerEngine
                 repeat(3) { index ->
                     bossSetupStatus?.text = "Sample ${index + 1} of 3: speak naturally for five seconds."
                     speak("Voice sample ${index + 1}. Please speak naturally.")
-                    val embedding = withContext(Dispatchers.IO) { engine.captureEmbedding() }
+                    val embedding = withContext(Dispatchers.IO) { speakerEngine.captureEmbedding() }
                     samples += embedding
                 }
                 val template = ThorSpeakerMatch().createBossTemplate(samples)
