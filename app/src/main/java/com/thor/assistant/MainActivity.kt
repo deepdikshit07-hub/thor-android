@@ -130,10 +130,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
-        intent.getStringExtra("thor_approval_request_id")?.takeIf { it.isNotBlank() }?.let { requestId ->
-            window.decorView.post { reviewMasterApproval(requestId) }
-        }
         showBossSetupIfNeeded()
+        processPendingApprovalIntent()
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
@@ -220,6 +218,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             bossProfile.saveBossName(name)
             bossProfile.finishSetup()
             dialog.dismiss()
+            processPendingApprovalIntent()
             addMessage("THOR", "Welcome, " + bossProfile.bossName() + ". Your Boss profile is saved on this device. Voice matching is not enabled yet.")
             speak("Welcome, Boss.")
         }
@@ -249,6 +248,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 bossProfile.saveBossEmbedding(ThorSpeakerMatch().encode(template))
                 bossProfile.finishSetup()
                 bossSetupDialog?.dismiss()
+                processPendingApprovalIntent()
                 addMessage(
                     "THOR",
                     "Three voice samples were processed on this device. Your local speaker template is saved for future verification work. Automatic Boss recognition is not enabled until the match threshold is calibrated on this phone."
@@ -716,8 +716,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val requestId = intent.getStringExtra("thor_approval_request_id")
-        if (!requestId.isNullOrBlank()) reviewMasterApproval(requestId)
+        processPendingApprovalIntent()
+    }
+
+    private fun processPendingApprovalIntent() {
+        if (!bossProfile.isConfigured()) return
+        val requestId = intent.getStringExtra("thor_approval_request_id") ?: return
+        if (requestId.isBlank()) return
+        intent.removeExtra("thor_approval_request_id")
+        window.decorView.post { reviewMasterApproval(requestId) }
     }
 
     private fun startVoiceInput() {
