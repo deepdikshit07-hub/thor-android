@@ -17,7 +17,7 @@ A fingerprint image or fingerprint template is never uploaded. Biometrics are pr
 
 ## Current implementation boundary
 
-The Android branch now includes the Worker API client, Firebase Messaging notification receiver, Device A registration with a Keystore public key, Device B request/poll flow, biometric approval prompt, Firebase custom-token sign-in, session status checks, an "I quit" session-end request, and a Device A session-revocation command (`revoke master sessions`). These changes have not yet passed a fresh Android build or two-phone integration test. The Worker must be deployed and configured before these screens can work. Do not use the old email OTP flow as a security fallback; its Cloud Functions were not deployed.
+The Android branch includes the Worker API client, Firebase Messaging notification receiver, Device A registration with a Keystore public key, Device B request/poll flow, biometric approval prompt, Firebase custom-token sign-in, session status checks, an "I quit" session-end request, and a Device A session-revocation command (`revoke master sessions`). The latest Android CI build on this branch passed, but the app has not yet been installed or tested on physical phones. The Worker must be deployed and configured before the approval flow can work. Do not use the old email OTP flow as a security fallback; its Cloud Functions were not deployed.
 
 ## One-time Cloudflare setup
 
@@ -59,7 +59,7 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 
 ## Deployment limitations and operational notes
 
-- FCM is best-effort. A force-stopped app, disabled notifications, lost network, or aggressive battery management can delay notifications.
+- FCM approval alerts use a high-priority data-only message so `ThorMessagingService` can create a notification containing the request ID in its tap action while THOR is backgrounded. FCM is best-effort: a force-stopped app, disabled notifications, lost network, or aggressive battery management can delay or prevent notifications.
 - The service-account JSON and master UID are secrets/configuration, not Android resources.
 - The custom token is short-lived (one hour) and is exchanged by Firebase Auth for its normal persisted user session. The session itself has no fixed application timeout; remote revocation is enforced when the app checks the Worker.
 - The Android client must check session revocation on app start/resume and before privileged actions. Offline operation cannot discover a new remote revocation until connectivity returns.
