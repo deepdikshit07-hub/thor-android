@@ -621,6 +621,47 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             }
     }
 
+    private fun showActiveMasterSessions() {
+        mainScope.launch {
+            try {
+                val sessions = masterApprovalClient.activeSessions()
+                if (sessions.length() == 0) {
+                    addMessage("THOR", "There are no active Master Mode sessions to revoke.")
+                    return@launch
+                }
+                val ids = (0 until sessions.length()).map { index ->
+                    sessions.getJSONObject(index).optString("session_id")
+                }
+                val labels = (0 until sessions.length()).map { index ->
+                    val item = sessions.getJSONObject(index)
+                    "Device ${item.optString("requester_device_id").take(8)} • ${item.optString("created_at")}"
+                }.toTypedArray()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Active Master Mode sessions")
+                    .setItems(labels) { _, which ->
+                        AlertDialog.Builder(this@MainActivity)
+                            .setMessage("Revoke this Device B Master Mode session?")
+                            .setPositiveButton("REVOKE") { _, _ ->
+                                mainScope.launch {
+                                    try {
+                                        masterApprovalClient.revokeSession(ids[which])
+                                        addMessage("THOR", "Selected Master Mode session revoked. Device B will be locked the next time it checks in.")
+                                    } catch (error: Exception) {
+                                        addMessage("THOR", "Session revocation failed: ${error.message}")
+                                    }
+                                }
+                            }
+                            .setNegativeButton("CANCEL", null)
+                            .show()
+                    }
+                    .setNegativeButton("CLOSE", null)
+                    .show()
+            } catch (error: Exception) {
+                addMessage("THOR", "Could not load active sessions: ${error.message}")
+            }
+        }
+    }
+
     private fun reviewMasterApproval(requestId: String) {
         mainScope.launch {
             try {
@@ -798,6 +839,12 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 val message = "Master session ended. General Boss mode restored. Welcome back, $localBoss."
                 addMessage("THOR", message)
                 speak(message)
+            }
+            lower in listOf("revoke master sessions", "manage master sessions") -> showActiveMasterSessions()
+            lower in listOf("master mode status", "master status") -> {
+                val status = if (masterVerifiedThisSession) "Master Mode is active on this device." else "Master Mode is not active on this device."
+                addMessage("THOR", status)
+                speak(status)
             }
             lower in listOf("who am i", "identify me", "what is my identity", "কে আমি", "मैं कौन हूँ") -> {
                 awaitingIdentityName = true
