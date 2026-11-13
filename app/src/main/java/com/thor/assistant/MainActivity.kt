@@ -50,6 +50,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var chat: TextView
     private lateinit var input: EditText
     private lateinit var language: Spinner
+    private lateinit var voiceStyle: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private lateinit var localStore: ThorLocalStore
@@ -63,6 +64,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
+    private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,6 +111,30 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             languages
         )
         root.addView(language, matchWrap())
+
+        voiceStyle = Spinner(this)
+        voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
+        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", position).apply()
+                applyVoiceStyle()
+            }
+        }
+        val voiceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        voiceRow.addView(voiceStyle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val previewVoice = makeButton("PREVIEW VOICE")
+        previewVoice.setOnClickListener {
+            val sample = when (language.selectedItemPosition) {
+                1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
+                2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
+                else -> "Hello. I am THOR. Systems are ready."
+            }
+            speak(sample)
+        }
+        voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(voiceRow, matchWrap())
 
         val scroll = ScrollView(this)
         chat = TextView(this).apply {
@@ -679,13 +705,26 @@ private fun launchIntent(
     private fun speak(message: String) {
         if (ttsReady) {
             setTtsLanguage()
+            applyVoiceStyle()
             tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "thor-${System.currentTimeMillis()}")
+        }
+    }
+
+    private fun applyVoiceStyle() {
+        val engine = tts ?: return
+        when (voiceStyle.selectedItemPosition) {
+            0 -> { engine.setPitch(0.82f); engine.setSpeechRate(0.90f) }
+            1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
+            else -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
         }
     }
 
     override fun onInit(status: Int) {
         ttsReady = status == TextToSpeech.SUCCESS
-        if (ttsReady) setTtsLanguage()
+        if (ttsReady) {
+            setTtsLanguage()
+            applyVoiceStyle()
+        }
     }
 
     private fun setTtsLanguage() {
