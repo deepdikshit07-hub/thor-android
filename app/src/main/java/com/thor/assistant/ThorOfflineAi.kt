@@ -39,6 +39,12 @@ class ThorOfflineAi(private val context: Context) {
     private var conversation: Conversation? = null
 
     fun isModelInstalled(): Boolean = modelFile.exists() && modelFile.length() > 100_000_000L
+    fun hasBundledModel(): Boolean = try {
+        context.assets.open(MODEL_FILE_NAME).close()
+        true
+    } catch (_: Exception) {
+        false
+    }
     fun isReady(): Boolean = conversation != null
 
     suspend fun downloadModel(onProgress: (Long, Long) -> Unit) = withContext(Dispatchers.IO) {
@@ -98,9 +104,19 @@ class ThorOfflineAi(private val context: Context) {
 
     suspend fun initialize() = lock.withLock {
         if (conversation != null) return@withLock
-        if (!isModelInstalled()) error("Offline model is not installed yet.")
-
         withContext(Dispatchers.IO) {
+            if (!isModelInstalled() && hasBundledModel()) {
+                val directory = modelFile.parentFile ?: error("Cannot access THOR model folder.")
+                if (!directory.exists() && !directory.mkdirs()) error("Could not create THOR model folder.")
+                context.assets.open(MODEL_FILE_NAME).use { input ->
+                    FileOutputStream(modelFile).use { output ->
+                        input.copyTo(output, 1024 * 1024)
+                        output.fd.sync()
+                    }
+                }
+            }
+            if (!isModelInstalled()) error("Offline model is not installed or bundled.")
+
             val candidate = Engine(
                 EngineConfig(
                     modelPath = modelFile.absolutePath,
