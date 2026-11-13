@@ -151,6 +151,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     override fun onStart() {
         super.onStart()
+        ThorReminderReceiver.restorePending(this)
         if (firebaseReady) {
             FirebaseAuth.getInstance().addAuthStateListener(masterAuthStateListener)
         }
@@ -1366,6 +1367,14 @@ lower.startsWith("অ্যালার্ম ") -> {
                     addMessage("THOR", "Microphone permission is required for wake listening.")
                 }
             }
+            1003 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                    ThorReminderReceiver.restorePending(this)
+                    addMessage("THOR", "Notifications are enabled. Any due THOR reminders have been restored.")
+                } else {
+                    addMessage("THOR", "Reminder alarms are saved, but Android notification permission is off. Enable it in app settings to receive reminder alerts.")
+                }
+            }
             1004 -> {
                 if (pendingBossVoiceEnrollment) {
                     pendingBossVoiceEnrollment = false
@@ -1594,7 +1603,7 @@ private fun launchIntent(
 
 
     private fun scheduleReminder(command: String) {
-        val relative = Regex("""(?i)in\s+(\d+)\s+(minute|minutes|min|hour|hours|hr)""").find(command)
+        val relative = Regex("""(?i)in\s+(\d+)\s+(minutes|minute|min|hours|hour|hr)""").find(command)
         val timeMatch = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
         val message = when {
             relative != null -> command.substring(relative.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
