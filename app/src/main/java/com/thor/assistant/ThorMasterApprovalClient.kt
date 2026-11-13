@@ -101,4 +101,10 @@ class ThorMasterApprovalClient(context: Context) {
 
     suspend fun revokeSession(session: String): JSONObject =
         call("/v1/sessions/$session/revoke", "POST", JSONObject().put("deviceId", deviceId))
+
+    suspend fun endSession(session: String): JSONObject =
+        call("/v1/sessions/$session/end", "POST", JSONObject())
+
+    suspend fun activeSessions(): JSONArray =
+        call("/v1/sessions/active?deviceId=$deviceId").optJSONArray("sessions") ?: JSONArray()
 }
