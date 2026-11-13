@@ -14,6 +14,8 @@ import android.os.Looper
 import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.appcheck.appCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
@@ -421,14 +423,94 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun showMasterModeSetupDialog() {
         masterVerifiedThisSession = false
-        val message = "Master account email: ${ThorMasterModeConfig.MASTER_EMAIL}\n\nEmail OTP sign-in is the planned verification method. The setup screen is available, but verification is not active yet: the Firebase project, secure server-side OTP function, and email delivery provider still need to be configured. No code has been sent and Master Mode cannot unlock yet."
+        if (!firebaseReady) {
+            val warning = "Firebase is not initialized. Check the Firebase configuration before requesting a Master verification code."
+            addMessage("THOR", warning)
+            speak(warning)
+            return
+        }
         AlertDialog.Builder(this)
             .setTitle("Master Mode Setup")
-            .setMessage(message)
-            .setPositiveButton("OK", null)
+            .setMessage("A six-digit, single-use verification code will be sent to:\\n\\n${ThorMasterModeConfig.MASTER_EMAIL}\\n\\nThe code expires in 5 minutes.")
+            .setPositiveButton("SEND EMAIL CODE") { _, _ -> requestMasterOtp() }
+            .setNegativeButton("CANCEL", null)
             .show()
-        addMessage("THOR", "Master Mode setup opened. Registered email: ${ThorMasterModeConfig.MASTER_EMAIL}. Email OTP backend is not connected yet.")
-        speak("Master Mode setup is open. Email verification is not active yet.")
+    }
+
+    private fun requestMasterOtp() {
+        addMessage("THOR", "Requesting a secure Master verification code...")
+        FirebaseFunctions.getInstance("asia-south1")
+            .getHttpsCallable("requestMasterOtp")
+            .call()
+            .addOnSuccessListener { result ->
+                val data = result.data as? Map<*, *>
+                val destination = data?.get("destination") as? String ?: "your registered email"
+                addMessage("THOR", "Verification code sent to $destination.")
+                showMasterOtpEntryDialog()
+            }
+            .addOnFailureListener { error ->
+                val message = error.localizedMessage ?: "Email verification could not be started."
+                addMessage("THOR", "Master verification failed: $message")
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            }
+    }
+
+    private fun showMasterOtpEntryDialog() {
+        val codeInput = EditText(this).apply {
+            hint = "Six-digit code"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+            filters = arrayOf(android.text.InputFilter.LengthFilter(6))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Verify Master email")
+            .setMessage("Enter the code sent to ${ThorMasterModeConfig.MASTER_EMAIL}. It expires in 5 minutes.")
+            .setView(codeInput)
+            .setPositiveButton("VERIFY", null)
+            .setNegativeButton("CANCEL", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val code = codeInput.text.toString().trim()
+                if (!code.matches(Regex("\\d{6}"))) {
+                    codeInput.error = "Enter all six digits"
+                    return@setOnClickListener
+                }
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                FirebaseFunctions.getInstance("asia-south1")
+                    .getHttpsCallable("verifyMasterOtp")
+                    .call(mapOf("code" to code))
+                    .addOnSuccessListener { result ->
+                        val data = result.data as? Map<*, *>
+                        val token = data?.get("customToken") as? String
+                        if (token.isNullOrBlank()) {
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            codeInput.error = "Server response was incomplete. Request a new code."
+                            return@addOnSuccessListener
+                        }
+                        FirebaseAuth.getInstance().signInWithCustomToken(token)
+                            .addOnSuccessListener {
+                                masterVerifiedThisSession = true
+                                dialog.dismiss()
+                                addMessage("THOR", "Email verified. Welcome back, Master.")
+                                speak("Email verified. Welcome back, Master.")
+                            }
+                            .addOnFailureListener { authError ->
+                                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                                val message = authError.localizedMessage ?: "Master sign-in failed."
+                                addMessage("THOR", message)
+                                codeInput.error = message
+                            }
+                    }
+                    .addOnFailureListener { error ->
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                        val message = error.localizedMessage ?: "That code could not be verified."
+                        addMessage("THOR", message)
+                        codeInput.error = message
+                    }
+            }
+        }
+        dialog.show()
     }
 
     private fun startVoiceInput() {
@@ -476,6 +558,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         when {
             lower == "i quit" || lower == "thor i quit" -> {
                 masterVerifiedThisSession = false
+                FirebaseAuth.getInstance().signOut()
                 awaitingIdentityName = false
                 val localBoss = bossProfile.bossName().ifBlank { "the local Boss" }
                 val message = "Master session ended. General Boss mode restored. Welcome back, $localBoss."
