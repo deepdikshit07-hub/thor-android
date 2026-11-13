@@ -288,7 +288,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.VERTICAL
             setPadding(8, 8, 8, 8)
             setBackgroundColor(background)
-            visibility = android.view.View.GONE
         }
 
         fun scrollPage(body: LinearLayout): ScrollView = ScrollView(this).apply {
