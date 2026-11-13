@@ -453,8 +453,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
         val passcodeInput = EditText(this).apply {
-            hint = "Master passcode"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "Master passphrase"
+            // Supports words and spaces, e.g. a private phrase chosen by the installer.
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
         }
         val dialog = AlertDialog.Builder(this)
@@ -533,6 +534,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         when {
+            lower == "i quit" || lower == "thor i quit" -> {
+                masterVerifiedThisSession = false
+                awaitingIdentityName = false
+                val localBoss = bossProfile.bossName().ifBlank { "the local Boss" }
+                val message = "Master session ended. General Boss mode restored. Welcome back, $localBoss."
+                addMessage("THOR", message)
+                speak(message)
+            }
             lower in listOf("who am i", "identify me", "what is my identity", "কে আমি", "मैं कौन हूँ") -> {
                 awaitingIdentityName = true
                 val prompt = "Please tell me your name."
