@@ -162,14 +162,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 nameInput.error = "Enter a name to continue"
                 return@setOnClickListener
             }
-            val passcode = passcodeInput.text.toString().toCharArray()
-            if (passcode.size < 6) {
-                passcodeInput.error = "Use at least 6 characters"
-                passcode.fill('\u0000')
-                return@setOnClickListener
-            }
-            masterPasscode.setPasscode(passcode)
-            passcodeInput.text?.clear()
             bossProfile.saveBossName(name)
             bossProfile.finishSetup()
             dialog.dismiss()
@@ -429,7 +421,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun showMasterModeSetupDialog() {
         masterVerifiedThisSession = false
-        val message = "Master account email: ${ThorMasterModeConfig.MASTER_EMAIL}\\n\\nEmail OTP sign-in is the planned verification method. The setup screen is available, but verification is not active yet: the Firebase project, secure server-side OTP function, and email delivery provider still need to be configured. No code has been sent and Master Mode cannot unlock yet."
+        val message = "Master account email: ${ThorMasterModeConfig.MASTER_EMAIL}\n\nEmail OTP sign-in is the planned verification method. The setup screen is available, but verification is not active yet: the Firebase project, secure server-side OTP function, and email delivery provider still need to be configured. No code has been sent and Master Mode cannot unlock yet."
         AlertDialog.Builder(this)
             .setTitle("Master Mode Setup")
             .setMessage(message)
