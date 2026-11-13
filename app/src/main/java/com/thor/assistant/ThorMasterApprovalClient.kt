@@ -93,12 +93,12 @@ class ThorMasterApprovalClient(context: Context) {
     suspend fun deny(requestId: String): JSONObject =
         call("/v1/requests/$requestId/deny", "POST", JSONObject().put("deviceId", deviceId))
 
-    suspend fun requestResult(requestId: String): JSONObject = call("/v1/requests/$requestId/result")
+    suspend fun requestResult(requestId: String): JSONObject = call("/v1/requests/$requestId/result?deviceId=$deviceId")
 
     suspend fun checkSession(): Boolean? {
         val id = sessionId()
         if (id.isBlank()) return false
-        return try { call("/v1/sessions/$id/check").optBoolean("active", false) }
+        return try { call("/v1/sessions/$id/check?deviceId=$deviceId").optBoolean("active", false) }
         catch (error: Exception) {
             if (error.message.orEmpty().contains("Forbidden", ignoreCase = true) ||
                 error.message.orEmpty().contains("not found", ignoreCase = true)) false
@@ -110,7 +110,7 @@ class ThorMasterApprovalClient(context: Context) {
         call("/v1/sessions/$session/revoke", "POST", JSONObject().put("deviceId", deviceId))
 
     suspend fun endSession(session: String): JSONObject =
-        call("/v1/sessions/$session/end", "POST", JSONObject())
+        call("/v1/sessions/$session/end", "POST", JSONObject().put("deviceId", deviceId))
 
     suspend fun activeSessions(): JSONArray =
         call("/v1/sessions/active?deviceId=$deviceId").optJSONArray("sessions") ?: JSONArray()

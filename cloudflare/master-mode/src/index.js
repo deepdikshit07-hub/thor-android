@@ -148,13 +148,19 @@ async function handle(request, env) {
 
   let body = {};
   if (request.method === "POST") {
-    try { body = await request.json(); } catch (_) { return json({ error: "Invalid JSON." }, 400); }
+    const declaredLength = Number(request.headers.get("content-length") || 0);
+    if (declaredLength > 16384) return json({ error: "Request body is too large." }, 413);
+    let rawBody = "";
+    try { rawBody = await request.text(); } catch (_) { return json({ error: "Invalid request body." }, 400); }
+    if (rawBody.length > 16384) return json({ error: "Request body is too large." }, 413);
+    try { body = rawBody ? JSON.parse(rawBody) : {}; } catch (_) { return json({ error: "Invalid JSON." }, 400); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "JSON object required." }, 400);
   }
 
   try {
     if (request.method === "POST" && url.pathname === "/v1/devices/register") {
       const { deviceId, role, publicKeyBase64, fcmToken } = body;
-      if (typeof deviceId !== "string" || deviceId.length > 80 ||
+      if (typeof deviceId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(deviceId) ||
           !["approver", "requester"].includes(role)) return json({ error: "Invalid device registration." }, 400);
       if (role === "approver" && identity.uid !== env.MASTER_UID) return json({ error: "Only the configured master account can register the trusted phone." }, 403);
       if (role === "requester" && identity.uid === env.MASTER_UID) return json({ error: "Use a separate Firebase account on Device B." }, 403);
@@ -169,7 +175,7 @@ async function handle(request, env) {
 
     if (request.method === "POST" && url.pathname === "/v1/requests") {
       const { deviceId } = body;
-      if (typeof deviceId !== "string") return json({ error: "Device ID required." }, 400);
+      if (typeof deviceId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(deviceId)) return json({ error: "Valid device ID required." }, 400);
       await requireDevice(env, deviceId, identity.uid, "requester");
       const approver = await env.DB.prepare(
         "SELECT device_id,fcm_token FROM devices WHERE firebase_uid=? AND role='approver' AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1"
@@ -265,10 +271,13 @@ async function handle(request, env) {
 
     const resultMatch = url.pathname.match(/^\/v1\/requests\/([A-Za-z0-9_-]+)\/result$/);
     if (request.method === "GET" && resultMatch) {
+      const deviceId = url.searchParams.get("deviceId") || "";
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(deviceId)) return json({ error: "Valid device ID required." }, 400);
+      await requireDevice(env, deviceId, identity.uid, "requester");
       const row = await env.DB.prepare(
         "SELECT r.status,r.requester_uid,r.requester_device_id,r.session_id,s.revoked_at FROM approval_requests r LEFT JOIN master_sessions s ON s.session_id=r.session_id WHERE r.request_id=?"
       ).bind(resultMatch[1]).first();
-      if (!row || row.requester_uid !== identity.uid) return json({ error: "Request not found." }, 404);
+      if (!row || row.requester_uid !== identity.uid || row.requester_device_id !== deviceId) return json({ error: "Request not found." }, 404);
       if (row.status !== "approved" || !row.session_id || row.revoked_at) return json({ status: row.status });
       const token = await issueFirebaseCustomToken(env, identity.uid, row.session_id);
       return json({ status: "approved", customToken: token, sessionId: row.session_id });
@@ -287,13 +296,16 @@ async function handle(request, env) {
 
     const endMatch = url.pathname.match(/^\/v1\/sessions\/([A-Za-z0-9_-]+)\/end$/);
     if (request.method === "POST" && endMatch) {
+      const deviceId = body.deviceId;
+      if (typeof deviceId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(deviceId)) return json({ error: "Valid device ID required." }, 400);
+      await requireDevice(env, deviceId, identity.uid, "requester");
       const now = Math.floor(Date.now() / 1000);
       await env.DB.prepare(
-        "UPDATE master_sessions SET revoked_at=? WHERE session_id=? AND requester_uid=? AND revoked_at IS NULL"
-      ).bind(now, endMatch[1], identity.uid).run();
+        "UPDATE master_sessions SET revoked_at=? WHERE session_id=? AND requester_uid=? AND requester_device_id=? AND revoked_at IS NULL"
+      ).bind(now, endMatch[1], identity.uid, deviceId).run();
       await env.DB.prepare(
-        "UPDATE approval_requests SET status='revoked' WHERE session_id=? AND requester_uid=?"
-      ).bind(endMatch[1], identity.uid).run();
+        "UPDATE approval_requests SET status='revoked' WHERE session_id=? AND requester_uid=? AND requester_device_id=?"
+      ).bind(endMatch[1], identity.uid, deviceId).run();
       return json({ ok: true, ended: true });
     }
 
@@ -310,10 +322,13 @@ async function handle(request, env) {
 
     const checkMatch = url.pathname.match(/^\/v1\/sessions\/([A-Za-z0-9_-]+)\/check$/);
     if (request.method === "GET" && checkMatch) {
+      const deviceId = url.searchParams.get("deviceId") || "";
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(deviceId)) return json({ active: false }, 403);
+      await requireDevice(env, deviceId, identity.uid, "requester");
       const row = await env.DB.prepare(
-        "SELECT requester_uid,revoked_at FROM master_sessions WHERE session_id=?"
+        "SELECT requester_uid,requester_device_id,revoked_at FROM master_sessions WHERE session_id=?"
       ).bind(checkMatch[1]).first();
-      if (!row || row.requester_uid !== identity.uid || row.revoked_at) return json({ active: false }, 403);
+      if (!row || row.requester_uid !== identity.uid || row.requester_device_id !== deviceId || row.revoked_at) return json({ active: false }, 403);
       return json({ active: true });
     }
 
