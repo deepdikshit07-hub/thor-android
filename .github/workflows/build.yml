@@ -41,6 +41,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      - name: Run Android lint and unit tests
+        run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest
 
       - name: Download bundled offline AI model
         run: |
