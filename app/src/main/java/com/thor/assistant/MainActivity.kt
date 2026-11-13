@@ -16,6 +16,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.initialize
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.appcheck.appCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
@@ -74,9 +75,21 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             user.getIdToken(false)
                 .addOnSuccessListener { tokenResult ->
                     val isMaster = tokenResult.claims["thorMaster"] == true
-                    masterVerifiedThisSession = isMaster
-                    if (isMaster) {
-                        addMessage("THOR", "Master Mode session restored. It has no app-level time limit; say 'I quit' to end it.")
+                    val sessionId = tokenResult.claims["thorSessionId"] as? String
+                    if (isMaster && !sessionId.isNullOrBlank()) {
+                        masterApprovalClient.saveSessionId(sessionId)
+                        mainScope.launch {
+                            val active = masterApprovalClient.checkSession()
+                            masterVerifiedThisSession = active
+                            if (active) addMessage("THOR", "Master Mode restored. No app timer is set; say 'I quit' to end this device session.")
+                            else {
+                                masterApprovalClient.clearSessionId()
+                                FirebaseAuth.getInstance().signOut()
+                                addMessage("THOR", "This Master session was revoked or could not be verified. Sign in and request approval again.")
+                            }
+                        }
+                    } else {
+                        masterVerifiedThisSession = false
                     }
                 }
                 .addOnFailureListener {
@@ -93,6 +106,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
+    private lateinit var masterApprovalClient: ThorMasterApprovalClient
     private var wakeRecognizer: SpeechRecognizer? = null
     private val wakeHandler = Handler(Looper.getMainLooper())
     private var wakeEnabled = false
@@ -109,6 +123,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
+        masterApprovalClient = ThorMasterApprovalClient(this)
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
@@ -451,11 +466,17 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             } else {
                 user.getIdToken(false)
                     .addOnSuccessListener { tokenResult ->
-                        if (tokenResult.claims["thorMaster"] == true) {
-                            masterVerifiedThisSession = true
-                            val message = "Welcome back, Master. Your existing Master Mode session is active."
-                            addMessage("THOR", message)
-                            speak(message)
+                        val sessionId = tokenResult.claims["thorSessionId"] as? String
+                        if (tokenResult.claims["thorMaster"] == true && !sessionId.isNullOrBlank()) {
+                            masterApprovalClient.saveSessionId(sessionId)
+                            mainScope.launch {
+                                masterVerifiedThisSession = masterApprovalClient.checkSession()
+                                val message = if (masterVerifiedThisSession) "Welcome back, Master. Your session is active."
+                                    else "That Master session is no longer valid. Request approval again."
+                                addMessage("THOR", message)
+                                speak(message)
+                                if (!masterVerifiedThisSession) FirebaseAuth.getInstance().signOut()
+                            }
                         } else {
                             showMasterModeSetupDialog()
                         }
@@ -473,17 +494,173 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     private fun showMasterModeSetupDialog() {
         if (!firebaseReady) {
-            val warning = "Firebase is not initialized. Check the Firebase configuration before requesting a Master verification code."
-            addMessage("THOR", warning)
-            speak(warning)
+            addMessage("THOR", "Firebase is not initialized. Check the Firebase configuration first.")
             return
         }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 4)
+        }
+        val endpoint = EditText(this).apply {
+            hint = "Cloudflare Worker URL (https://....workers.dev)"
+            setSingleLine(true)
+            setText(masterApprovalClient.baseUrl)
+        }
+        val email = EditText(this).apply {
+            hint = "Firebase account email"
+            setSingleLine(true)
+            setText(ThorMasterModeConfig.MASTER_EMAIL)
+        }
+        val password = EditText(this).apply {
+            hint = "Firebase account password"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine(true)
+        }
+        panel.addView(endpoint)
+        panel.addView(email)
+        panel.addView(password)
         AlertDialog.Builder(this)
-            .setTitle("Master Mode Setup")
-            .setMessage("A six-digit, single-use verification code will be sent to:\\n\\n${ThorMasterModeConfig.MASTER_EMAIL}\\n\\nThe code expires in 5 minutes.")
-            .setPositiveButton("SEND EMAIL CODE") { _, _ -> requestMasterOtp() }
-            .setNegativeButton("CANCEL", null)
+            .setTitle("Remote Master Mode")
+            .setMessage("Sign in with a Firebase Email/Password account. Device A must use the account whose UID is configured as MASTER_UID in Cloudflare. Device B should use its own Firebase account.")
+            .setView(panel)
+            .setPositiveButton("SET UP DEVICE A") { _, _ ->
+                masterApprovalClient.baseUrl = endpoint.text.toString()
+                authenticateAndRegisterApprover(email.text.toString().trim(), password.text.toString())
+            }
+            .setNegativeButton("REQUEST ON DEVICE B") { _, _ ->
+                masterApprovalClient.baseUrl = endpoint.text.toString()
+                authenticateAndRequestMaster(email.text.toString().trim(), password.text.toString())
+            }
+            .setNeutralButton("CANCEL", null)
             .show()
+    }
+
+    private fun authenticateAndRegisterApprover(email: String, password: String) {
+        if (email.isBlank() || password.isBlank()) {
+            addMessage("THOR", "Enter the trusted Device A Firebase email and password.")
+            return
+        }
+        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
+            .addOnSuccessListener {
+                try {
+                    val approval = ThorDeviceApproval(this)
+                    val publicKey = if (approval.hasKey()) approval.publicKeyBase64() else approval.createKey()
+                    FirebaseMessaging.getInstance().token
+                        .addOnSuccessListener { token ->
+                            mainScope.launch {
+                                try {
+                                    masterApprovalClient.registerApprover(publicKey, token)
+                                    addMessage("THOR", "Device A is registered as the trusted approval phone. Keep notifications enabled.")
+                                    speak("Trusted phone registered.")
+                                } catch (error: Exception) {
+                                    addMessage("THOR", "Device A registration failed: ${error.message}")
+                                }
+                            }
+                        }
+                        .addOnFailureListener { error ->
+                            addMessage("THOR", "Could not obtain the notification token: ${error.message}")
+                        }
+                } catch (error: Exception) {
+                    addMessage("THOR", "Secure key setup failed: ${error.message}")
+                }
+            }
+            .addOnFailureListener { error ->
+                addMessage("THOR", "Firebase sign-in failed: ${error.localizedMessage}")
+            }
+    }
+
+    private fun authenticateAndRequestMaster(email: String, password: String) {
+        if (email.isBlank() || password.isBlank()) {
+            addMessage("THOR", "Enter this Device B Firebase email and password.")
+            return
+        }
+        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
+            .addOnSuccessListener {
+                mainScope.launch {
+                    try {
+                        masterApprovalClient.registerRequester()
+                        val request = masterApprovalClient.requestApproval()
+                        val requestId = request.getString("requestId")
+                        addMessage("THOR", "Approval request sent to Device A. Waiting for fingerprint approval...")
+                        val deadline = System.currentTimeMillis() + 180_000L
+                        while (System.currentTimeMillis() < deadline) {
+                            val result = masterApprovalClient.requestResult(requestId)
+                            when (result.optString("status")) {
+                                "approved" -> {
+                                    val customToken = result.optString("customToken")
+                                    val sessionId = result.optString("sessionId")
+                                    if (customToken.isBlank() || sessionId.isBlank()) error("The approval server returned an incomplete session.")
+                                    masterApprovalClient.saveSessionId(sessionId)
+                                    FirebaseAuth.getInstance().signInWithCustomToken(customToken)
+                                        .addOnSuccessListener {
+                                            masterVerifiedThisSession = true
+                                            addMessage("THOR", "Fingerprint approval verified. Master Mode is active on this device.")
+                                            speak("Master Mode unlocked.")
+                                        }
+                                        .addOnFailureListener { authError ->
+                                            masterApprovalClient.clearSessionId()
+                                            addMessage("THOR", "Master session sign-in failed: ${authError.localizedMessage}")
+                                        }
+                                    return@launch
+                                }
+                                "expired", "denied", "revoked" -> error("The approval request is ${result.optString("status")}.")
+                            }
+                            delay(3000L)
+                        }
+                        addMessage("THOR", "No approval arrived before the three-minute request expired.")
+                    } catch (error: Exception) {
+                        addMessage("THOR", "Master approval failed: ${error.message}")
+                    }
+                }
+            }
+            .addOnFailureListener { error ->
+                addMessage("THOR", "Firebase sign-in failed: ${error.localizedMessage}")
+            }
+    }
+
+    private fun reviewMasterApproval(requestId: String) {
+        mainScope.launch {
+            try {
+                val details = masterApprovalClient.requestDetails(requestId)
+                val challenge = details.getString("challenge")
+                val requester = details.optString("requester_uid", "Unknown device")
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Approve Master Mode?")
+                    .setMessage("A signed-in device is requesting Master Mode.\n\nRequester: $requester\n\nApprove only if you initiated this request.")
+                    .setPositiveButton("VERIFY FINGERPRINT") { _, _ ->
+                        val approval = ThorDeviceApproval(this@MainActivity)
+                        approval.authenticateAndSign(challenge.toByteArray(Charsets.UTF_8)) { signed ->
+                            signed.onSuccess { bytes ->
+                                val signature = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                                mainScope.launch {
+                                    try {
+                                        masterApprovalClient.approve(requestId, signature)
+                                        addMessage("THOR", "Fingerprint verified. Master Mode approval sent to the requesting device.")
+                                        speak("Approval completed.")
+                                    } catch (error: Exception) {
+                                        addMessage("THOR", "Approval rejected: ${error.message}")
+                                    }
+                                }
+                            }.onFailure { error ->
+                                addMessage("THOR", "Fingerprint approval cancelled or failed: ${error.message}")
+                            }
+                        }
+                    }
+                    .setNegativeButton("DENY") { _, _ ->
+                        addMessage("THOR", "Approval was not granted.")
+                    }
+                    .show()
+            } catch (error: Exception) {
+                addMessage("THOR", "Could not load this approval request: ${error.message}")
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val requestId = intent.getStringExtra("thor_approval_request_id")
+        if (!requestId.isNullOrBlank()) reviewMasterApproval(requestId)
     }
 
     private fun requestMasterOtp() {
@@ -607,6 +784,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         when {
             lower == "i quit" || lower == "thor i quit" -> {
                 masterVerifiedThisSession = false
+                val endingSession = masterApprovalClient.sessionId()
+                masterApprovalClient.clearSessionId()
+                if (endingSession.isNotBlank()) mainScope.launch {
+                    try { masterApprovalClient.endSession(endingSession) } catch (_: Exception) {}
+                }
                 FirebaseAuth.getInstance().signOut()
                 awaitingIdentityName = false
                 val localBoss = bossProfile.bossName().ifBlank { "the local Boss" }
