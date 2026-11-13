@@ -25,23 +25,21 @@ class ThorSpeakerEngine(context: Context) : Closeable {
 
     private val appContext = context.applicationContext
     private val fbank = ThorFbank(appContext)
-    private val model: CompiledModel
-    private val inputBuffers
-    private val outputBuffers
-
-    init {
+    private val runtime = run {
         val modelFile = File(appContext.filesDir, MODEL_FILE)
         require(modelFile.exists() && modelFile.length() > 10_000_000L) {
             "Speaker model is missing. Reinstall the current THOR build."
         }
-        model = CompiledModel.create(
+        val compiled = CompiledModel.create(
             modelFile.absolutePath,
             CompiledModel.Options(Accelerator.CPU),
             null
         )
-        inputBuffers = model.createInputBuffers()
-        outputBuffers = model.createOutputBuffers()
+        Triple(compiled, compiled.createInputBuffers(), compiled.createOutputBuffers())
     }
+    private val model get() = runtime.first
+    private val inputBuffers get() = runtime.second
+    private val outputBuffers get() = runtime.third
 
     /** Blocks for about 5 seconds. Call from a background thread. */
     fun captureEmbedding(): FloatArray {
