@@ -4,6 +4,12 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget("17"))
+    }
+}
+
 android {
     namespace = "com.thor.assistant"
     compileSdk = 35
@@ -21,9 +27,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     buildTypes {
         release {
