@@ -23,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -183,6 +184,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 repeat(3) { index ->
                     bossSetupStatus?.text = "Sample ${index + 1} of 3: speak naturally for five seconds."
                     speak("Voice sample ${index + 1}. Please speak naturally.")
+                    delay(1_500L)
                     val embedding = withContext(Dispatchers.IO) { speakerEngine.captureEmbedding() }
                     samples += embedding
                 }
