@@ -15,7 +15,6 @@ import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.functions.FirebaseFunctions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.appcheck.appCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
@@ -719,82 +718,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         setIntent(intent)
         val requestId = intent.getStringExtra("thor_approval_request_id")
         if (!requestId.isNullOrBlank()) reviewMasterApproval(requestId)
-    }
-
-    private fun requestMasterOtp() {
-        addMessage("THOR", "Requesting a secure Master verification code...")
-        FirebaseFunctions.getInstance("asia-south1")
-            .getHttpsCallable("requestMasterOtp")
-            .call()
-            .addOnSuccessListener { result ->
-                val data = result.data as? Map<*, *>
-                val destination = data?.get("destination") as? String ?: "your registered email"
-                addMessage("THOR", "Verification code sent to $destination.")
-                showMasterOtpEntryDialog()
-            }
-            .addOnFailureListener { error ->
-                val message = error.localizedMessage ?: "Email verification could not be started."
-                addMessage("THOR", "Master verification failed: $message")
-                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-            }
-    }
-
-    private fun showMasterOtpEntryDialog() {
-        val codeInput = EditText(this).apply {
-            hint = "Six-digit code"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            setSingleLine(true)
-            filters = arrayOf(android.text.InputFilter.LengthFilter(6))
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Verify Master email")
-            .setMessage("Enter the code sent to ${ThorMasterModeConfig.MASTER_EMAIL}. It expires in 5 minutes.")
-            .setView(codeInput)
-            .setPositiveButton("VERIFY", null)
-            .setNegativeButton("CANCEL", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val code = codeInput.text.toString().trim()
-                if (!code.matches(Regex("\\d{6}"))) {
-                    codeInput.error = "Enter all six digits"
-                    return@setOnClickListener
-                }
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
-                FirebaseFunctions.getInstance("asia-south1")
-                    .getHttpsCallable("verifyMasterOtp")
-                    .call(mapOf("code" to code))
-                    .addOnSuccessListener { result ->
-                        val data = result.data as? Map<*, *>
-                        val token = data?.get("customToken") as? String
-                        if (token.isNullOrBlank()) {
-                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
-                            codeInput.error = "Server response was incomplete. Request a new code."
-                            return@addOnSuccessListener
-                        }
-                        FirebaseAuth.getInstance().signInWithCustomToken(token)
-                            .addOnSuccessListener {
-                                masterVerifiedThisSession = true
-                                dialog.dismiss()
-                                addMessage("THOR", "Email verified. Welcome back, Master.")
-                                speak("Email verified. Welcome back, Master.")
-                            }
-                            .addOnFailureListener { authError ->
-                                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
-                                val message = authError.localizedMessage ?: "Master sign-in failed."
-                                addMessage("THOR", message)
-                                codeInput.error = message
-                            }
-                    }
-                    .addOnFailureListener { error ->
-                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
-                        val message = error.localizedMessage ?: "That code could not be verified."
-                        addMessage("THOR", message)
-                        codeInput.error = message
-                    }
-            }
-        }
-        dialog.show()
     }
 
     private fun startVoiceInput() {
