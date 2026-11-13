@@ -92,11 +92,15 @@ class ThorMasterApprovalClient(context: Context) {
 
     suspend fun requestResult(requestId: String): JSONObject = call("/v1/requests/$requestId/result")
 
-    suspend fun checkSession(): Boolean {
+    suspend fun checkSession(): Boolean? {
         val id = sessionId()
         if (id.isBlank()) return false
         return try { call("/v1/sessions/$id/check").optBoolean("active", false) }
-        catch (_: Exception) { false }
+        catch (error: Exception) {
+            if (error.message.orEmpty().contains("Forbidden", ignoreCase = true) ||
+                error.message.orEmpty().contains("not found", ignoreCase = true)) false
+            else null // Network/service failure is unknown, not proof of revocation.
+        }
     }
 
     suspend fun revokeSession(session: String): JSONObject =
