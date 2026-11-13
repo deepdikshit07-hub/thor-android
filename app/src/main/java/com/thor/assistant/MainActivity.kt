@@ -328,6 +328,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     openAppAndControlMedia(match.groupValues[1].trim(), match.groupValues[2].lowercase(Locale.ROOT))
                 } != null -> Unit
 
+            lower.contains("youtube") && lower.contains("download") &&
+                (lower.contains("5th") || lower.contains("fifth")) && lower.contains("play") ->
+                startYoutubeFifthDownloadNavigation()
+
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
@@ -741,6 +745,48 @@ lower.startsWith("অ্যালার্ম ") -> {
                 "I am offline. I can still manage notes and tasks, open apps and settings, use the dialer, prepare SMS, set up Clock reminders, and control supported media playback. For open-ended AI answers, reconnect to the internet and check Firebase."
         }
         return reply
+    }
+
+    private fun startYoutubeFifthDownloadNavigation() {
+        val serviceName = android.content.ComponentName(this, ThorNavigationService::class.java).flattenToString()
+        val enabledServices = Settings.Secure.getString(
+            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ).orEmpty()
+        val serviceEnabled = enabledServices.split(':').any { it.equals(serviceName, ignoreCase = true) }
+
+        if (!serviceEnabled) {
+            val message = "Screen Navigation needs your permission first. Enable THOR Navigation in Android Accessibility settings, then repeat the command."
+            addMessage("THOR", message)
+            speak(message)
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {
+                addMessage("THOR", "Open Settings > Accessibility > THOR Navigation manually.")
+            }
+            return
+        }
+
+        val launch = packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+        if (launch == null) {
+            val message = "YouTube is not installed or cannot be opened on this phone."
+            addMessage("THOR", message)
+            speak(message)
+            return
+        }
+
+        getSharedPreferences("thor_navigation", MODE_PRIVATE).edit()
+            .putString("task", "YOUTUBE_FIFTH_DOWNLOAD")
+            .putString("stage", "WAIT_DOWNLOADS")
+            .putString("seen_items", "")
+            .apply()
+        addMessage("THOR", "Opening YouTube. I'll look for Downloads and select the fifth listed video. You can stop the task by turning off THOR Navigation in Accessibility settings.")
+        speak("Opening YouTube. Navigating to Downloads.")
+        try {
+            startActivity(launch)
+        } catch (error: Exception) {
+            getSharedPreferences("thor_navigation", MODE_PRIVATE).edit().clear().apply()
+            addMessage("THOR", "I couldn't open YouTube: ${error.message ?: "launch failed"}")
+        }
     }
 
     private fun openAppAndControlMedia(requestedName: String, action: String) {
