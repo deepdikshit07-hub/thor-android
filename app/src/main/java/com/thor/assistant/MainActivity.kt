@@ -268,54 +268,179 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun buildScreen() {
+        val background = Color.rgb(5, 9, 18)
+        val panel = Color.rgb(10, 19, 34)
+        val blue = Color.rgb(45, 190, 255)
+        val muted = Color.rgb(145, 170, 195)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(22, 24, 22, 18)
-            setBackgroundColor(Color.rgb(7, 11, 20))
+            setPadding(16, 18, 16, 8)
+            setBackgroundColor(background)
         }
 
-        val title = TextView(this).apply {
-            text = "T H O R"
-            textSize = 30f
-            gravity = Gravity.CENTER
-            setTextColor(Color.rgb(75, 210, 255))
+        val contentFrame = android.widget.FrameLayout(this)
+        root.addView(contentFrame, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        fun page(): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(8, 8, 8, 8)
+            setBackgroundColor(background)
+            visibility = android.view.View.GONE
         }
-        root.addView(title, matchWrap())
-        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
-            duration = 1500
+
+        fun scrollPage(body: LinearLayout): ScrollView = ScrollView(this).apply {
+            addView(body)
+            isFillViewport = true
+        }
+
+        val homeBody = page()
+        val homeScroll = scrollPage(homeBody)
+        val homeTitle = TextView(this).apply {
+            text = "THOR"
+            textSize = 32f
+            gravity = Gravity.CENTER
+            setTextColor(blue)
+            letterSpacing = 0.22f
+        }
+        homeBody.addView(homeTitle, matchWrap())
+        ObjectAnimator.ofFloat(homeTitle, "alpha", 0.72f, 1f).apply {
+            duration = 1800L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             start()
         }
-
-        val subtitle = TextView(this).apply {
-            text = "PERSONAL ANDROID ASSISTANT"
+        homeBody.addView(TextView(this).apply {
+            text = "YOUR PERSONAL AI ASSISTANT"
             textSize = 11f
             gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
+            setTextColor(muted)
+            letterSpacing = 0.12f
+        }, matchWrap())
+        homeBody.addView(ThorHudView(this), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (220 * resources.displayMetrics.density).toInt()
+        ).apply { setMargins(0, 18, 0, 18) })
+        homeBody.addView(TextView(this).apply {
+            text = "READY WHEN YOU ARE"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(blue)
+            letterSpacing = 0.1f
+        }, matchWrap())
+        val homeMic = makeButton("TAP TO SPEAK")
+        homeMic.setTextColor(Color.WHITE)
+        homeMic.setBackgroundColor(Color.rgb(0, 105, 180))
+        homeMic.setOnClickListener { startVoiceInput() }
+        homeBody.addView(homeMic, matchWrap())
+        val homeWake = makeButton("WAKE WORD: OFF")
+        homeWake.setOnClickListener { toggleWakeWord(homeWake) }
+        wakeButton = homeWake
+        homeBody.addView(homeWake, matchWrap())
+        contentFrame.addView(homeScroll, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        val chatBody = page()
+        val chatScroll = ScrollView(this)
+        chat = TextView(this).apply {
+            textSize = 15f
+            setTextColor(Color.rgb(225, 237, 248))
+            setPadding(12, 16, 12, 16)
         }
-        root.addView(subtitle, matchWrap())
+        chatScroll.addView(chat)
+        chatBody.addView(chatScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        input = EditText(this).apply {
+            hint = "Message THOR..."
+            setHintTextColor(muted)
+            setTextColor(Color.WHITE)
+            setSingleLine(true)
+            setPadding(14, 12, 14, 12)
+            setBackgroundColor(panel)
+        }
+        chatBody.addView(input, matchWrap())
+        val chatActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val send = makeButton("SEND")
+        send.setOnClickListener {
+            val command = input.text.toString().trim()
+            if (command.isNotEmpty()) {
+                input.setText("")
+                handleCommand(command)
+            }
+        }
+        val mic = makeButton("MIC")
+        mic.setOnClickListener { startVoiceInput() }
+        val help = makeButton("HELP")
+        help.setOnClickListener { addMessage("THOR", helpText()) }
+        chatActions.addView(send, weightedButton())
+        chatActions.addView(mic, weightedButton())
+        chatActions.addView(help, weightedButton())
+        chatBody.addView(chatActions, matchWrap())
+        contentFrame.addView(chatBody, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
 
-        root.addView(ThorHudView(this), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, (142 * resources.displayMetrics.density).toInt()
-        ).apply { bottomMargin = 8 })
-
+        val featuresBody = page()
+        featuresBody.addView(TextView(this).apply {
+            text = "FEATURES"
+            textSize = 22f
+            setTextColor(blue)
+            setPadding(4, 8, 4, 16)
+        }, matchWrap())
         language = Spinner(this)
-        language.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            languages
-        )
-        root.addView(language, matchWrap())
-
+        language.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, languages)
+        featuresBody.addView(sectionLabel("Assistant language"), matchWrap())
+        featuresBody.addView(language, matchWrap())
         val offlineButton = makeButton("INSTALL OFFLINE AI (~586 MB)")
         offlineAiButton = offlineButton
         offlineButton.setOnClickListener { installOfflineAi() }
-        root.addView(offlineButton, matchWrap())
+        featuresBody.addView(offlineButton, matchWrap())
+        val masterSetupButton = makeButton("MASTER MODE SETUP")
+        masterSetupButton.setOnClickListener { showMasterModeSetupDialog() }
+        featuresBody.addView(masterSetupButton, matchWrap())
+        val memoryButton = makeButton("PERSONAL MEMORY")
+        memoryButton.setOnClickListener { showPersonalMemoryManager() }
+        featuresBody.addView(memoryButton, matchWrap())
+        contentFrame.addView(scrollPage(featuresBody), android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply { })
+        val featuresPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
+        val securityBody = page()
+        securityBody.addView(TextView(this).apply {
+            text = "PRIVACY & SECURITY"
+            textSize = 22f
+            setTextColor(blue)
+            setPadding(4, 8, 4, 16)
+        }, matchWrap())
+        val securityButton = makeButton("OPEN SECURITY CENTRE")
+        securityButton.setOnClickListener { showSecurityCentre() }
+        securityBody.addView(securityButton, matchWrap())
+        val activityButton = makeButton("SECURITY ACTIVITY")
+        activityButton.setOnClickListener { showSecurityActivity() }
+        securityBody.addView(activityButton, matchWrap())
+        contentFrame.addView(scrollPage(securityBody), android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        val securityPage = contentFrame.getChildAt(contentFrame.childCount - 1)
+
+        val settingsBody = page()
+        settingsBody.addView(TextView(this).apply {
+            text = "SETTINGS"
+            textSize = 22f
+            setTextColor(blue)
+            setPadding(4, 8, 4, 16)
+        }, matchWrap())
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
-        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE)
+            .getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
         voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
@@ -323,8 +448,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 applyVoiceStyle()
             }
         }
-        val voiceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        voiceRow.addView(voiceStyle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        settingsBody.addView(sectionLabel("Voice style"), matchWrap())
+        settingsBody.addView(voiceStyle, matchWrap())
         val previewVoice = makeButton("PREVIEW VOICE")
         previewVoice.setOnClickListener {
             val sample = when (language.selectedItemPosition) {
@@ -334,76 +459,54 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             }
             speak(sample)
         }
-        voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(voiceRow, matchWrap())
-
-        val masterSetupButton = makeButton("MASTER MODE SETUP")
-        masterSetupButton.setOnClickListener { showMasterModeSetupDialog() }
-        root.addView(masterSetupButton, matchWrap())
-
-        val managementRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
-        val memoryButton = makeButton("PERSONAL MEMORY")
-        memoryButton.setOnClickListener { showPersonalMemoryManager() }
-        val securityButton = makeButton("SECURITY CENTRE")
-        securityButton.setOnClickListener { showSecurityCentre() }
-        managementRow.addView(memoryButton, weightedButton())
-        managementRow.addView(securityButton, weightedButton())
-        root.addView(managementRow, matchWrap())
-
-
-        val scroll = ScrollView(this)
-        chat = TextView(this).apply {
-            textSize = 15f
-            setTextColor(Color.rgb(225, 235, 245))
-            setPadding(12, 16, 12, 16)
-        }
-        scroll.addView(chat)
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        settingsBody.addView(previewVoice, matchWrap())
+        val wakeSettings = makeButton("WAKE WORD: OFF")
+        wakeSettings.setOnClickListener { toggleWakeWord(wakeSettings) }
+        settingsBody.addView(wakeSettings, matchWrap())
+        contentFrame.addView(scrollPage(settingsBody), android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
+        val settingsPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
-        input = EditText(this).apply {
-            hint = "Type a command..."
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.WHITE)
-            setSingleLine(true)
-            setPadding(14, 10, 14, 10)
-        }
-        root.addView(input, matchWrap())
-
-        val buttons = LinearLayout(this).apply {
+        val pages = listOf(homeScroll, chatBody, featuresPage, securityPage, settingsPage)
+        val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(0, 6, 0, 4)
+            setBackgroundColor(Color.rgb(8, 16, 29))
         }
-
-        val send = makeButton("SEND")
-        send.setOnClickListener {
-            val command = input.text.toString().trim()
-            if (command.isNotEmpty()) {
-                input.setText("")
-                handleCommand(command)
+        val navLabels = listOf("HOME", "CHAT", "FEATURES", "SECURITY", "SETTINGS")
+        val navButtons = mutableListOf<Button>()
+        fun showTab(index: Int) {
+            pages.forEachIndexed { pageIndex, view ->
+                view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
+            }
+            navButtons.forEachIndexed { buttonIndex, button ->
+                button.setTextColor(if (buttonIndex == index) blue else muted)
+                button.setBackgroundColor(if (buttonIndex == index) Color.rgb(15, 43, 68) else Color.TRANSPARENT)
             }
         }
-
-        val mic = makeButton("MIC")
-        mic.setOnClickListener { startVoiceInput() }
-
-        val help = makeButton("HELP")
-        help.setOnClickListener { addMessage("THOR", helpText()) }
-        val wake = makeButton("WAKE: OFF")
-        wakeButton = wake
-        wake.setOnClickListener { toggleWakeWord(wake) }
-
-        buttons.addView(send, weightedButton())
-        buttons.addView(mic, weightedButton())
-        buttons.addView(help, weightedButton())
-        buttons.addView(wake, weightedButton())
-        root.addView(buttons, matchWrap())
-
+        navLabels.forEachIndexed { index, label ->
+            val button = makeButton(label).apply {
+                textSize = 9.5f
+                setTextColor(muted)
+                setBackgroundColor(Color.TRANSPARENT)
+                setOnClickListener { showTab(index) }
+            }
+            navButtons.add(button)
+            nav.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        root.addView(nav, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
         setContentView(root)
+        showTab(0)
+    }
+
+    private fun sectionLabel(value: String) = TextView(this).apply {
+        text = value
+        textSize = 13f
+        setTextColor(Color.rgb(145, 190, 220))
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
