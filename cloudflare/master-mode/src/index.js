@@ -267,6 +267,29 @@ async function handle(request, env) {
       return json({ ok: true, revoked: true });
     }
 
+    const endMatch = url.pathname.match(/^\/v1\/sessions\/([A-Za-z0-9_-]+)\/end$/);
+    if (request.method === "POST" && endMatch) {
+      const now = Math.floor(Date.now() / 1000);
+      await env.DB.prepare(
+        "UPDATE master_sessions SET revoked_at=? WHERE session_id=? AND requester_uid=? AND revoked_at IS NULL"
+      ).bind(now, endMatch[1], identity.uid).run();
+      await env.DB.prepare(
+        "UPDATE approval_requests SET status='revoked' WHERE session_id=? AND requester_uid=?"
+      ).bind(endMatch[1], identity.uid).run();
+      return json({ ok: true, ended: true });
+    }
+
+    const activeMatch = url.pathname === "/v1/sessions/active";
+    if (request.method === "GET" && activeMatch) {
+      if (identity.uid !== env.MASTER_UID) return json({ error: "Forbidden." }, 403);
+      const deviceId = url.searchParams.get("deviceId") || "";
+      await requireDevice(env, deviceId, identity.uid, "approver");
+      const rows = await env.DB.prepare(
+        "SELECT session_id,requester_uid,requester_device_id,created_at FROM master_sessions WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 25"
+      ).all();
+      return json({ sessions: rows.results || [] });
+    }
+
     const checkMatch = url.pathname.match(/^\/v1\/sessions\/([A-Za-z0-9_-]+)\/check$/);
     if (request.method === "GET" && checkMatch) {
       const row = await env.DB.prepare(
