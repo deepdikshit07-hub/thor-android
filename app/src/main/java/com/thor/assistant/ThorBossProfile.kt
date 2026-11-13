@@ -4,8 +4,9 @@ import android.content.Context
 import java.io.File
 
 /**
- * Per-install owner profile. Data remains in this app's private storage.
- * The saved recording is an enrollment sample, not a speaker-verification model.
+ * Per-install owner profile. Voice material remains in app-private storage.
+ * The original recording is an enrollment source; a verified speaker embedding is stored
+ * separately once the on-device model pipeline is connected.
  */
 class ThorBossProfile(context: Context) {
     private val appContext = context.applicationContext
@@ -21,6 +22,15 @@ class ThorBossProfile(context: Context) {
     fun voiceSampleFile(): File = File(appContext.filesDir, "thor_boss_voice_sample.m4a")
 
     fun hasVoiceSample(): Boolean = voiceSampleFile().exists() && voiceSampleFile().length() > 0L
+
+    fun saveBossEmbedding(encodedEmbedding: String) {
+        require(encodedEmbedding.isNotBlank())
+        prefs.edit().putString("boss_embedding_v1", encodedEmbedding).apply()
+    }
+
+    fun bossEmbedding(): String? = prefs.getString("boss_embedding_v1", null)
+
+    fun hasBossEmbedding(): Boolean = !bossEmbedding().isNullOrBlank()
 
     fun finishSetup() {
         prefs.edit().putBoolean("setup_complete", true).apply()
