@@ -758,8 +758,8 @@ private fun launchIntent(
 
 
     private fun scheduleReminder(command: String) {
-        val relative = Regex("""(?i)in\\s+(\\d+)\\s+(minute|minutes|min|hour|hours|hr)""").find(command)
-        val timeMatch = Regex("""(\\d{1,2})[:.](\\d{2})""").find(command)
+        val relative = Regex("""(?i)in\s+(\d+)\s+(minute|minutes|min|hour|hours|hr)""").find(command)
+        val timeMatch = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
         val message = when {
             relative != null -> command.substring(relative.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
             timeMatch != null -> command.substring(timeMatch.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
