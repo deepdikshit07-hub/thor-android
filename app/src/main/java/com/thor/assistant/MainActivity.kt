@@ -1034,7 +1034,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleIdentityName(identity: String) {
-        val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
+        val normalized = identity.trim().lowercase(Locale.ROOT)
+            .replace(Regex("[.!?,]+$"), "")
+            .replace(Regex("\\s+"), " ")
         val isAritra = normalized == "aritra" || normalized == "aritra adhikary"
         val isDeep = normalized == "i am deep dikshit"
 
@@ -1540,7 +1542,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     lower.startsWith("i am ") -> command.substring(5).trim()
                     else -> command.substring(8).trim()
                 }
-                handleIdentityName(identity)
+                if (lower.startsWith("i am ") && identity.equals("deep dikshit", ignoreCase = true)) {
+                    handleIdentityName(command)
+                } else {
+                    handleIdentityName(identity)
+                }
             }
             learningMemory.parseTeaching(command)?.let { learned ->
                 addMessage("THOR", learned)
