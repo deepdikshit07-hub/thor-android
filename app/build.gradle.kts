@@ -13,13 +13,11 @@ kotlin {
 android {
     namespace = "com.thor.assistant"
     compileSdk = 35
-    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.thor.assistant"
         minSdk = 26
         targetSdk = 35
-    ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         versionCode = 1
         versionName = "1.0"
     }
@@ -30,12 +28,6 @@ android {
     }
 
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
 
     buildTypes {
         release {
