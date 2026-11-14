@@ -86,6 +86,10 @@ class ThorAiProviderManager(private val context: Context) {
         require(config.provider != Provider.LOCAL) { "Local AI is selected." }
         require(config.provider != Provider.GEMINI) { "Gemini requests must use Firebase AI Logic." }
         require(config.apiKey.isNotBlank()) { "Add an API key for ${config.provider.title} in AI Provider settings." }
+        require(config.model.isNotBlank()) { "Enter a model name." }
+        if (config.provider == Provider.GEMINI_API) {
+            return@withContext askGeminiApi(config, prompt, maxTokens)
+        }
         val endpoint = config.endpoint.trim()
         require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
         require(config.model.isNotBlank()) { "Enter a model name." }
