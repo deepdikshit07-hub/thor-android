@@ -964,16 +964,45 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
+    /**
+     * Lightweight liquid-glass surface: translucent layered gradients, a soft specular
+     * highlight and a fine edge. It deliberately avoids real-time backdrop blur so the
+     * interface remains smooth and compatible with Android 10 / lower-memory devices.
+     */
     private fun premiumBackground(fill: Int, stroke: Int = Color.rgb(38, 88, 124)): android.graphics.drawable.Drawable {
-        val drawable = android.graphics.drawable.GradientDrawable().apply {
+        val radius = dp(22).toFloat()
+        fun glassShape(color: Int) = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-            cornerRadius = dp(22).toFloat()
-            setColor(fill)
-            if (stroke != Color.TRANSPARENT) setStroke(dp(1), stroke)
+            cornerRadius = radius
+            setColor(color)
         }
+        fun withAlpha(color: Int, alpha: Int) =
+            Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+
+        val base = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(withAlpha(fill, 218), withAlpha(fill, 184))
+        ).apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radius
+        }
+        val highlight = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.argb(38, 235, 248, 255), Color.argb(8, 190, 225, 255), Color.argb(0, 190, 225, 255))
+        ).apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radius
+        }
+        val edge = glassShape(Color.TRANSPARENT).apply {
+            setStroke(dp(1), if (stroke == Color.TRANSPARENT) Color.TRANSPARENT else withAlpha(stroke, 205))
+        }
+        val sheen = glassShape(Color.TRANSPARENT).apply {
+            setStroke(dp(1), Color.argb(72, 240, 249, 255))
+        }
+        val layers = android.graphics.drawable.LayerDrawable(arrayOf(base, highlight, edge, sheen))
         return android.graphics.drawable.RippleDrawable(
-            android.content.res.ColorStateList.valueOf(Color.argb(42, 120, 210, 255)),
-            drawable,
+            android.content.res.ColorStateList.valueOf(Color.argb(48, 135, 218, 255)),
+            layers,
             null
         )
     }
