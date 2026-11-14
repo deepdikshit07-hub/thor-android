@@ -116,6 +116,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private var firebaseReady = false
     private lateinit var masterApprovalClient: ThorMasterApprovalClient
     private var wakeRecognizer: SpeechRecognizer? = null
+    private var tapRecognizer: SpeechRecognizer? = null
     private val wakeHandler = Handler(Looper.getMainLooper())
     private var wakeEnabled = false
     private var waitingForWakeCommand = false
@@ -1024,23 +1025,72 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun startVoiceInput() {
-        val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to THOR")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // A preference only: the installed speech service may still require internet.
-            putExtra("android.speech.extra.PREFER_OFFLINE", true)
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1001)
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            addMessage("THOR", "No compatible speech-recognition service is installed or enabled on this device. Install or enable a speech service such as Google Speech Services, then try again.")
+            return
         }
         try {
-            startActivityForResult(intent, 1001)
-        } catch (_: ActivityNotFoundException) {
-            addMessage("THOR", "No speech recognition app is available. Please type your command.")
+            tapRecognizer?.cancel()
+            tapRecognizer?.destroy()
+            tapRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext).also { recognizer ->
+                recognizer.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        addMessage("THOR", "Listening. Speak now.")
+                    }
+                    override fun onBeginningOfSpeech() = Unit
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray?) = Unit
+                    override fun onEndOfSpeech() = Unit
+                    override fun onPartialResults(partialResults: Bundle?) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                    override fun onError(error: Int) {
+                        android.util.Log.e("THOR_MIC", "Tap recognition error=$error")
+                        addMessage("THOR", speechErrorMessage(error))
+                        tapRecognizer?.destroy()
+                        tapRecognizer = null
+                    }
+                    override fun onResults(results: Bundle?) {
+                        val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()?.trim()
+                        tapRecognizer?.destroy()
+                        tapRecognizer = null
+                        if (!spoken.isNullOrBlank()) handleCommand(spoken)
+                        else addMessage("THOR", "I didn't catch that. Please try again.")
+                    }
+                })
+            }
+            val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
+            val request = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                // Do not force offline recognition: many devices have no downloaded offline language pack.
+            }
+            tapRecognizer?.startListening(request)
+        } catch (error: Exception) {
+            android.util.Log.e("THOR_MIC", "Could not start tap recognition", error)
+            tapRecognizer?.destroy()
+            tapRecognizer = null
+            addMessage("THOR", "Microphone could not start: ${error.message ?: error.javaClass.simpleName}. Check that another app is not using the microphone.")
         }
+    }
+
+    private fun speechErrorMessage(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_AUDIO -> "The speech service could not access the microphone audio. Check Android's microphone privacy switch and close other apps using the mic."
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Android denied microphone access to THOR. Allow Microphone in App info → Permissions."
+        SpeechRecognizer.ERROR_CLIENT -> "The speech service stopped unexpectedly. Close and reopen THOR, then retry."
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+            "The speech service is unavailable. Check internet access or install its required language pack."
+        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
+            "This speech service does not support the selected language. Try another language or install its speech pack."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Another app or recognition session is using the speech service. Wait a moment and retry."
+        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I couldn't hear clear speech. Check microphone access and try speaking again."
+        else -> "Speech recognition failed (error $error). Check the device's speech service and microphone privacy settings."
     }
 
     @Deprecated("Legacy activity result API is used to avoid an extra AndroidX dependency.")
@@ -1497,6 +1547,10 @@ lower.startsWith("অ্যালার্ম ") -> {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
+            1001 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoiceInput()
+                else addMessage("THOR", "Microphone permission is required for voice input. Enable it in Android App info → Permissions.")
+            }
             1002 -> {
                 val button = wakeButton ?: return
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -2126,6 +2180,9 @@ private fun launchIntent(
 
     override fun onDestroy() {
         stopWakeWord()
+        try { tapRecognizer?.cancel() } catch (_: Exception) {}
+        tapRecognizer?.destroy()
+        tapRecognizer = null
         try { bossRecorder?.stop() } catch (_: Exception) {}
         bossRecorder?.release()
         bossRecorder = null
