@@ -406,6 +406,17 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }, matchWrap())
         language = Spinner(this)
         language.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, languages)
+        val savedLanguage = getSharedPreferences("thor_voice", MODE_PRIVATE).getString("language", "en-IN")
+        language.setSelection(languageTags.indexOf(savedLanguage).coerceAtLeast(0))
+        language.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit()
+                    .putString("language", languageTags.getOrElse(position) { "en-IN" }).apply()
+                setTtsLanguage()
+                applyVoiceStyle()
+            }
+        }
         featuresBody.addView(sectionLabel("Assistant language"), matchWrap())
         featuresBody.addView(language, matchWrap())
         val offlineButton = makeButton("INSTALL OFFLINE AI (~586 MB)")
@@ -477,6 +488,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             speak(sample)
         }
         settingsBody.addView(previewVoice, matchWrap())
+        val systemVoiceSettings = makeButton("VOICE ENGINE SETTINGS")
+        systemVoiceSettings.setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_TTS_SETTINGS))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            }
+        }
+        settingsBody.addView(systemVoiceSettings, matchWrap())
         val wakeSettings = makeButton("WAKE WORD: OFF")
         wakeSettings.setOnClickListener { toggleWakeWord(wakeSettings) }
         settingsBody.addView(wakeSettings, matchWrap())
@@ -1940,7 +1960,7 @@ private fun launchIntent(
                 if (language.selectedItemPosition == 0) {
                     val britishVoice = engine.voices
                         ?.filter { it.locale.language.equals("en", true) &&
-                            it.locale.country.equals("GB", true) }
+                            it.locale.country.equals("GB", true) && !it.isNetworkConnectionRequired }
                         ?.maxByOrNull { it.quality }
                     if (britishVoice != null) engine.voice = britishVoice
                 }
@@ -1953,7 +1973,7 @@ private fun launchIntent(
         if (ttsReady) {
             tts?.setAudioAttributes(
                 android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
