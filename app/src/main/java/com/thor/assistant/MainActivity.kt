@@ -325,14 +325,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
         val homeBody = page()
         val homeScroll = scrollPage(homeBody)
-        val homeTitle = TextView(this).apply {
-            text = "THOR"
-            textSize = 32f
-            gravity = Gravity.CENTER
-            setTextColor(blue)
-            letterSpacing = 0.22f
-        }
-        homeBody.addView(homeTitle, matchWrap())
+        val homeTitle = ThorRoyalWordmarkView(this)
+        homeBody.addView(homeTitle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(88)
+        ))
         // Persistent creator emblem: visible on the Home screen, not only during the splash animation.
         homeBody.addView(creatorEmblemView(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
