@@ -7,10 +7,6 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.MediaRecorder
 import android.view.KeyEvent
-import android.speech.RecognitionListener
-import android.speech.SpeechRecognizer
-import android.os.Handler
-import android.os.Looper
 import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
@@ -41,7 +37,6 @@ import android.os.Bundle
 import android.os.Build
 import android.provider.AlarmClock
 import android.provider.Settings
-import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.ViewGroup
@@ -120,12 +115,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
     private lateinit var masterApprovalClient: ThorMasterApprovalClient
-    private var wakeRecognizer: SpeechRecognizer? = null
-    private var tapRecognizer: SpeechRecognizer? = null
-    private val wakeHandler = Handler(Looper.getMainLooper())
-    private var wakeEnabled = false
-    private var waitingForWakeCommand = false
     private var wakeButton: Button? = null
+    private var voiceEngine: ThorWhisperEngine? = null
+    private var voiceBusy = false
+    private var voiceModelDownloadConfirmed = false
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
@@ -560,8 +553,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             val message = if (enabled)
                 "Background wake is enabled. THOR will listen while this app is in the background and show a notification when it hears your command. Android may restrict microphone use or stop the service in battery-saving modes."
             else {
-                stopService(Intent(this, ThorBackgroundWakeService::class.java))
-                "Background wake is disabled."
+                        "Background wake is disabled."
             }
             addMessage("THOR", message)
             speak(message)
@@ -1210,82 +1202,42 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun startVoiceInput() {
+        if (voiceBusy) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1001)
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            addMessage("THOR", "No compatible speech-recognition service is installed or enabled on this device. Install or enable a speech service such as Google Speech Services, then try again.")
+        val modelFile = java.io.File(filesDir, "thor_voice/ggml-tiny-q5_1.bin")
+        if (!modelFile.exists() && !voiceModelDownloadConfirmed) {
+            AlertDialog.Builder(this)
+                .setTitle("Set up THOR offline voice")
+                .setMessage("THOR needs a one-time download of about 32 MB. After that, microphone transcription runs locally without Google's speech service and without uploading your recordings. Continue using your current connection?")
+                .setNegativeButton("NOT NOW", null)
+                .setPositiveButton("DOWNLOAD") { _, _ ->
+                    voiceModelDownloadConfirmed = true
+                    startVoiceInput()
+                }
+                .show()
             return
         }
-        try {
-            tapRecognizer?.cancel()
-            tapRecognizer?.destroy()
-            tapRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext).also { recognizer ->
-                recognizer.setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        addMessage("THOR", "Listening. Speak now.")
-                    }
-                    override fun onBeginningOfSpeech() = Unit
-                    override fun onRmsChanged(rmsdB: Float) = Unit
-                    override fun onBufferReceived(buffer: ByteArray?) = Unit
-                    override fun onEndOfSpeech() = Unit
-                    override fun onPartialResults(partialResults: Bundle?) = Unit
-                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
-                    override fun onError(error: Int) {
-                        android.util.Log.e("THOR_MIC", "Tap recognition error=$error")
-                        addMessage("THOR", speechErrorMessage(error))
-                        tapRecognizer?.destroy()
-                        tapRecognizer = null
-                    }
-                    override fun onResults(results: Bundle?) {
-                        val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            ?.firstOrNull()?.trim()
-                        tapRecognizer?.destroy()
-                        tapRecognizer = null
-                        if (!spoken.isNullOrBlank()) handleCommand(spoken)
-                        else addMessage("THOR", "I didn't catch that. Please try again.")
-                    }
-                })
-            }
-            val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
-            val request = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                // Do not force offline recognition: many devices have no downloaded offline language pack.
-            }
-            tapRecognizer?.startListening(request)
-        } catch (error: Exception) {
-            android.util.Log.e("THOR_MIC", "Could not start tap recognition", error)
-            tapRecognizer?.destroy()
-            tapRecognizer = null
-            addMessage("THOR", "Microphone could not start: ${error.message ?: error.javaClass.simpleName}. Check that another app is not using the microphone.")
-        }
-    }
 
-    private fun speechErrorMessage(error: Int): String = when (error) {
-        SpeechRecognizer.ERROR_AUDIO -> "The speech service could not access the microphone audio. Check Android's microphone privacy switch and close other apps using the mic."
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Android denied microphone access to THOR. Allow Microphone in App info → Permissions."
-        SpeechRecognizer.ERROR_CLIENT -> "The speech service stopped unexpectedly. Close and reopen THOR, then retry."
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
-        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
-            "The speech service is unavailable. Check internet access or install its required language pack."
-        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
-            "This speech service does not support the selected language. Try another language or install its speech pack."
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Another app or recognition session is using the speech service. Wait a moment and retry."
-        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I couldn't hear clear speech. Check microphone access and try speaking again."
-        else -> "Speech recognition failed (error $error). Check the device's speech service and microphone privacy settings."
-    }
-
-    @Deprecated("Legacy activity result API is used to avoid an extra AndroidX dependency.")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001 && resultCode == RESULT_OK) {
-            val spoken = data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-            if (!spoken.isNullOrBlank()) handleCommand(spoken)
+        voiceBusy = true
+        addMessage("THOR", "Offline microphone active. Speak clearly after the model is ready.")
+        mainScope.launch {
+            try {
+                val engine = voiceEngine ?: ThorWhisperEngine().also { voiceEngine = it }
+                val languageCode = listOf("en", "hi", "bn").getOrElse(language.selectedItemPosition) { "en" }
+                val spoken = engine.transcribe(filesDir, languageCode) { status ->
+                    runOnUiThread { voiceStatus?.text = status }
+                }
+                voiceStatus?.text = "Offline voice ready"
+                handleCommand(spoken)
+            } catch (error: Exception) {
+                android.util.Log.e("THOR_MIC", "Offline speech recognition failed", error)
+                addMessage("THOR", error.message ?: "Offline voice recognition failed. Please try again.")
+            } finally {
+                voiceBusy = false
+            }
         }
     }
 
@@ -1606,124 +1558,11 @@ lower.startsWith("অ্যালার্ম ") -> {
      * Optional wake listening works only while this screen is visible.
      * THOR does not keep the microphone active in the background.
      */
+    // Wake-word recognition is intentionally disabled until the local engine
+    // has a dedicated low-power keyword model. It no longer calls Android STT.
     private fun toggleWakeWord(button: Button) {
-        if (wakeEnabled) {
-            stopWakeWord()
-            button.text = "WAKE: OFF"
-            addMessage("THOR", "Wake listening stopped.")
-            return
-        }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            addMessage("THOR", "No speech-recognition service is available.")
-            return
-        }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1002)
-            return
-        }
-        startWakeWord(button)
-    }
-
-    private fun startWakeWord(button: Button) {
-        wakeEnabled = true
-        waitingForWakeCommand = false
-        button.text = "WAKE: ON"
-        addMessage("THOR", "Wake listening is active only while THOR stays open. Say Hey THOR, then your command.")
-        if (wakeRecognizer == null) {
-            wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer ->
-                recognizer.setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {}
-                    override fun onBeginningOfSpeech() {}
-                    override fun onRmsChanged(rmsdB: Float) {}
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-                    override fun onEndOfSpeech() {}
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                    override fun onPartialResults(partialResults: Bundle?) {}
-                    override fun onError(error: Int) {
-                        android.util.Log.e("THOR_WAKE", "Speech recognition error=$error: ${speechErrorMessage(error)}")
-                        val retryDelay = when (error) {
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 450L
-                            SpeechRecognizer.ERROR_NO_MATCH -> 550L
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1_600L
-                            SpeechRecognizer.ERROR_NETWORK,
-                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> 2_000L
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                                addMessage("THOR", speechErrorMessage(error))
-                                stopWakeWord()
-                                wakeButton?.text = "WAKE: OFF"
-                                return
-                            }
-                            else -> 1_100L
-                        }
-                        scheduleWakeListening(retryDelay)
-                    }
-                    override fun onResults(results: Bundle?) {
-                        val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            ?.firstOrNull()?.trim().orEmpty()
-                        if (heard.isNotBlank()) {
-                            val normalized = heard.lowercase(Locale.ROOT)
-                            if (waitingForWakeCommand) {
-                                waitingForWakeCommand = false
-                                handleCommand(heard)
-                            } else if (normalized.startsWith("hey thor ")) {
-                                val directCommand = heard.substringAfter("hey thor", "").trim().trimStart(',', ':')
-                                if (directCommand.isNotBlank()) {
-                                    handleCommand(directCommand)
-                                } else {
-                                    waitingForWakeCommand = true
-                                    addMessage("THOR", "I'm listening. Speak your command.")
-                                    speak("I'm listening")
-                                }
-                            } else if (normalized.startsWith("thor ")) {
-                                val directCommand = heard.substringAfter("thor", "").trim().trimStart(',', ':')
-                                if (directCommand.isNotBlank()) handleCommand(directCommand)
-                                else {
-                                    waitingForWakeCommand = true
-                                    addMessage("THOR", "I'm listening. Speak your command.")
-                                    speak("I'm listening")
-                                }
-                            } else if (normalized.contains("hey thor") || normalized == "thor") {
-                                waitingForWakeCommand = true
-                                addMessage("THOR", "I'm listening. Speak your command.")
-                                speak("I'm listening")
-                            }
-                        }
-                        scheduleWakeListening(500L)
-                    }
-                })
-            }
-        }
-        scheduleWakeListening(250L)
-    }
-
-    private fun scheduleWakeListening(delayMs: Long) {
-        wakeHandler.removeCallbacksAndMessages(null)
-        if (!wakeEnabled || isFinishing || isDestroyed) return
-        wakeHandler.postDelayed({
-            if (!wakeEnabled) return@postDelayed
-            try {
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTags.getOrElse(language.selectedItemPosition) { "en-IN" })
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    // Let the installed recognition provider choose network or local processing.
-                }
-                wakeRecognizer?.startListening(intent)
-            } catch (error: Exception) {
-                addMessage("THOR", "Wake listening stopped: ${error.message ?: "speech service unavailable"}")
-                stopWakeWord()
-                wakeButton?.text = "WAKE: OFF"
-            }
-        }, delayMs)
-    }
-
-    private fun stopWakeWord() {
-        wakeEnabled = false
-        waitingForWakeCommand = false
-        wakeHandler.removeCallbacksAndMessages(null)
-        try { wakeRecognizer?.cancel() } catch (_: Exception) {}
-        wakeRecognizer?.destroy()
-        wakeRecognizer = null
+        button.text = "WAKE: OFF"
+        addMessage("THOR", "Always-on wake listening is temporarily unavailable. Tap the microphone for private offline voice input.")
     }
 
     @Deprecated("Legacy permission callback is used to avoid an extra AndroidX dependency.")
@@ -1735,16 +1574,6 @@ lower.startsWith("অ্যালার্ম ") -> {
             1001 -> {
                 if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoiceInput()
                 else addMessage("THOR", "Microphone permission is required for voice input. Enable it in Android App info → Permissions.")
-            }
-            1002 -> {
-                val button = wakeButton ?: return
-                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    startWakeWord(button)
-                } else {
-                    getSharedPreferences("thor_wake", MODE_PRIVATE).edit()
-                        .putBoolean("background_enabled", false).apply()
-                    addMessage("THOR", "Microphone permission was denied. Background wake has been switched off.")
-                }
             }
             1003 -> {
                 if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
@@ -2476,21 +2305,7 @@ private fun launchIntent(
     override fun onPause() {
         val liveWasActive = liveSession != null
         if (liveWasActive) stopThorLive()
-        stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
-        if (!liveWasActive && getSharedPreferences("thor_wake", MODE_PRIVATE).getBoolean("background_enabled", false) &&
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        ) {
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(Intent(this, ThorBackgroundWakeService::class.java))
-                } else {
-                    startService(Intent(this, ThorBackgroundWakeService::class.java))
-                }
-            } catch (error: Exception) {
-                android.util.Log.e("THOR_WAKE", "Could not start background wake service", error)
-            }
-        }
         super.onPause()
     }
 
@@ -2501,10 +2316,8 @@ private fun launchIntent(
 
     override fun onDestroy() {
         stopThorLive()
-        stopWakeWord()
-        try { tapRecognizer?.cancel() } catch (_: Exception) {}
-        tapRecognizer?.destroy()
-        tapRecognizer = null
+        voiceEngine?.release()
+        voiceEngine = null
         try { bossRecorder?.stop() } catch (_: Exception) {}
         bossRecorder?.release()
         bossRecorder = null
