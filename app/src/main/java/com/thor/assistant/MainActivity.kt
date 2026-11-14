@@ -118,6 +118,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        liveChatEnabled = getSharedPreferences("thor_live", MODE_PRIVATE).getBoolean("show_live_chat", true)
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
         securityAudit = ThorSecurityAuditLog(this)
@@ -463,6 +464,30 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val moreShortcut = makeButton("MORE")
         moreShortcut.setOnClickListener { showTab(3) }
         settingsBody.addView(moreShortcut, matchWrap())
+        settingsBody.addView(sectionLabel("Live Talking"), matchWrap())
+        val liveChatSettings = Switch(this).apply {
+            text = "SHOW LIVE CHAT"
+            textSize = 12f
+            setTextColor(Color.rgb(220, 230, 240))
+            isChecked = liveChatEnabled
+            setOnCheckedChangeListener { _, enabled ->
+                liveChatEnabled = enabled
+                getSharedPreferences("thor_live", MODE_PRIVATE).edit()
+                    .putBoolean("show_live_chat", enabled)
+                    .apply()
+                liveCaptionText?.visibility = if (enabled) View.VISIBLE else View.GONE
+                if (enabled && liveSession != null) {
+                    liveCaptionText?.text = "Live captions enabled. New conversation text will appear here."
+                }
+            }
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        settingsBody.addView(liveChatSettings, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Controls whether conversation captions are shown during Live Talking. Voice and microphone interaction continue when this is off."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
         val testGeminiButton = makeButton("TEST ONLINE AI CONNECTION")
         testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
         settingsBody.addView(testGeminiButton, matchWrap())
@@ -663,24 +688,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }
         liveStatusText = status
         body.addView(status, matchWrap())
-
-        val liveChatToggle = Switch(this).apply {
-            text = "SHOW LIVE CHAT"
-            textSize = 12f
-            setTextColor(Color.rgb(220, 230, 240))
-            isChecked = liveChatEnabled
-            setOnCheckedChangeListener { _, enabled ->
-                liveChatEnabled = enabled
-                liveCaptionText?.visibility = if (enabled) View.VISIBLE else View.GONE
-                if (enabled && liveSession != null) {
-                    liveCaptionText?.text = "Live captions enabled. New conversation text will appear here."
-                }
-            }
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-        }
-        body.addView(liveChatToggle, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(dp(12), dp(8), dp(12), dp(2)) })
 
         val caption = TextView(this).apply {
             text = "Your conversation stays temporary and is cleared when the session ends."
