@@ -118,12 +118,19 @@ class ThorLiveSession(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
+                    android.util.Log.d("THOR_LIVE", "Gemini Live server frame received (0 chars)")
                     handleServerMessage(text, ready)
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    if (!ready.isCompleted) ready.completeExceptionally(t)
-                    if (!stopped.get()) fail(t.message ?: "Live connection failed.")
+                    val detail = buildString {
+                        append(t.message ?: "Network connection failed.")
+                        if (response != null) append(" (HTTP ${response.code}: ${response.message})")
+                    }
+                    android.util.Log.e("THOR_LIVE", "Gemini Live WebSocket failed: $detail", t)
+                    val error = IllegalStateException(detail, t)
+                    if (!ready.isCompleted) ready.completeExceptionally(error)
+                    if (!stopped.get()) fail("Gemini Live connection failed: $detail")
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -133,21 +140,39 @@ class ThorLiveSession(
                     if (!stopped.get()) fail("Live connection closed: $reason")
                 }
             })
-            withTimeout(20_000L) { ready.await() }
+            withTimeout(15_000L) { ready.await() }
             if (stopped.get()) return
             startAudio()
             notifyState(State.LISTENING, "LISTENING")
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            fail(error.message ?: "Could not start Live Mode.")
-            throw error
+            val detail = if (error is kotlinx.coroutines.TimeoutCancellationException) {
+                "Gemini did not confirm the Live session setup within 15 seconds. Check that the phone has a stable internet connection and that this Gemini API key has Live API access. The app will not keep waiting."
+            } else {
+                error.message ?: "Could not start Live Mode."
+            }
+            android.util.Log.e("THOR_LIVE", "Live session startup failed: $detail", error)
+            fail(detail)
+            throw IllegalStateException(detail, error)
         }
     }
 
     private fun handleServerMessage(raw: String, ready: CompletableDeferred<Unit>) {
         try {
             val root = JSONObject(raw)
+            // The Live API can return a structured error frame after the socket opens.
+            // Surface that immediately instead of silently waiting for setupComplete.
+            val serverError = root.optJSONObject("error")
+            if (serverError != null) {
+                val code = serverError.optInt("code", 0)
+                val message = serverError.optString("message").ifBlank { "Gemini rejected the Live session setup." }
+                val detail = if (code > 0) "HTTP $code: $message" else message
+                android.util.Log.e("THOR_LIVE", "Gemini Live setup error: $detail")
+                if (!ready.isCompleted) ready.completeExceptionally(IllegalStateException(detail))
+                fail("Gemini Live setup rejected: $detail")
+                return
+            }
             if (root.has("setupComplete")) {
                 if (!ready.isCompleted) ready.complete(Unit)
                 return
@@ -187,7 +212,10 @@ class ThorLiveSession(
                 notifyState(State.LISTENING, "LISTENING")
             }
         } catch (error: Exception) {
-            android.util.Log.w("THOR_LIVE", "Ignored malformed Live message", error)
+            android.util.Log.w("THOR_LIVE", "Could not process Gemini Live server message", error)
+            if (!ready.isCompleted) ready.completeExceptionally(
+                IllegalStateException("Gemini Live returned an unreadable setup response.", error)
+            )
         }
     }
 
