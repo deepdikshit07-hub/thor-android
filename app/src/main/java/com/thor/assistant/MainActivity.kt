@@ -1208,6 +1208,24 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             lower.contains("instagram") && (lower.contains("reel") || lower.contains("short video")) ->
                 startNavigationTask("com.instagram.android", "INSTAGRAM_REELS", "WAIT_REELS", 0)
 
+            lower == "ai mobile data on" -> {
+                getSharedPreferences("thor_data_saver", MODE_PRIVATE).edit()
+                    .putBoolean("ai_mobile_data_allowed", true).apply()
+                addMessage("THOR", "Mobile data is now allowed for online AI. Use 'ai mobile data off' to turn it off.")
+            }
+
+            lower == "ai mobile data off" -> {
+                getSharedPreferences("thor_data_saver", MODE_PRIVATE).edit()
+                    .putBoolean("ai_mobile_data_allowed", false).apply()
+                addMessage("THOR", "Data Saver enabled. Online AI will use Wi-Fi only.")
+            }
+
+            lower == "ai data status" -> {
+                val allowed = getSharedPreferences("thor_data_saver", MODE_PRIVATE)
+                    .getBoolean("ai_mobile_data_allowed", false)
+                addMessage("THOR", if (allowed) "Online AI may use mobile data." else "Online AI is Wi-Fi only.")
+            }
+
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
@@ -1606,22 +1624,50 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
+    private fun isWifiConnected(): Boolean {
+        val connectivity = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val network = connectivity.activeNetwork ?: return false
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     private fun askGemini(prompt: String) {
         if (!firebaseReady) {
             askLocalOrFallback(prompt)
             return
         }
+
+        val prefs = getSharedPreferences("thor_data_saver", MODE_PRIVATE)
+        val mobileDataAllowed = prefs.getBoolean("ai_mobile_data_allowed", false)
+        if (!isWifiConnected() && !mobileDataAllowed) {
+            addMessage("THOR", "Data Saver: online AI is paused on mobile data. Connect to Wi-Fi, or enable mobile data with 'ai mobile data on'.")
+            askLocalOrFallback(prompt)
+            return
+        }
+
+        val quotaBlockedUntil = prefs.getLong("gemini_quota_blocked_until", 0L)
+        if (System.currentTimeMillis() < quotaBlockedUntil) {
+            val minutes = ((quotaBlockedUntil - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
+            addMessage("THOR", "Gemini quota cooldown is active for about $minutes more minutes. Using offline AI to save requests.")
+            askLocalOrFallback(prompt)
+            return
+        }
+
+        val compactPrompt = prompt.trim().take(2000)
         val languageInstruction = when (language.selectedItemPosition) {
             1 -> "Reply in natural Hindi."
             2 -> "Reply in natural Bengali."
             else -> "Reply in clear English."
         }
-        val styleInstruction = "Automatically match the user's language and level of informality in every reply. If the user writes in casual English, internet slang, Bengali colloquial language, or Bengali-English mix, reply naturally in that same casual register and language. Understand common everyday slang and informal spellings; do not lecture the user about slang or unnecessarily correct it. Use slang naturally rather than forcing it into every sentence. Keep replies clear and avoid hateful slurs or targeted harassment."
-        android.util.Log.i("THOR_GEMINI", "Gemini request started")
+        val styleInstruction = "Match the user's language and casual tone. Be concise and helpful."
+        android.util.Log.i("THOR_GEMINI", "Gemini request started (data-saver mode)")
         addMessage("THOR", "Connecting to online AI...")
         mainScope.launch {
             try {
-                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n${learningMemory.systemContext()}\nUser: $prompt")
+                val memoryContext = learningMemory.systemContext().take(1200)
+                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n$memoryContext\nUser: $compactPrompt")
+                prefs.edit().remove("gemini_quota_blocked_until").apply()
                 android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
                 addMessage("THOR", answer)
                 speak(answer)
@@ -1634,7 +1680,19 @@ lower.startsWith("অ্যালার্ম ") -> {
             } catch (error: Exception) {
                 android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
                 val detail = error.message ?: error.javaClass.simpleName
-                addMessage("THOR", "Online AI unavailable ($detail). Switching to the on-device AI.")
+                val quotaError = detail.contains("quota", ignoreCase = true) ||
+                    detail.contains("resource exhausted", ignoreCase = true) ||
+                    detail.contains("429", ignoreCase = true)
+                if (quotaError) {
+                    // One-hour cooldown avoids repeated requests after a free-tier quota error.
+                    prefs.edit().putLong(
+                        "gemini_quota_blocked_until",
+                        System.currentTimeMillis() + 60L * 60L * 1000L
+                    ).apply()
+                    addMessage("THOR", "Gemini's free quota is exhausted. I'll use offline AI and won't retry online for one hour.")
+                } else {
+                    addMessage("THOR", "Online AI unavailable. Switching to offline AI.")
+                }
                 askLocalOrFallback(prompt)
             }
         }
@@ -1992,6 +2050,7 @@ private fun launchIntent(
         "• hey THOR (visible wake listening while THOR is open)\n" +
         "• pause music / next song / previous song / volume up\n" +
         "• wifi settings / bluetooth settings\n" +
+        "• ai data status / ai mobile data on / ai mobile data off\n" +
         "• what time is it\n" +
         "• search space news\n" +
         "• teach me that no cap means I am serious\n" +
