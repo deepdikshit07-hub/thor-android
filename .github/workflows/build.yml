@@ -86,6 +86,15 @@ jobs:
           unzip -t "$APK" >/dev/null
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.thor.assistant'"
 
+      - name: Report APK signing certificate fingerprints
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          CERTS="$("$APKSIGNER" verify --print-certs "$APK")"
+          echo "## Android signing certificate fingerprints" >> "$GITHUB_STEP_SUMMARY"
+          echo "These fingerprints identify the certificate on this exact APK." >> "$GITHUB_STEP_SUMMARY"
+          echo "$CERTS" | grep -E 'Signer #1 certificate (SHA-1|SHA-256) digest:' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload APK
         id: upload_apk
         uses: actions/upload-artifact@v4
