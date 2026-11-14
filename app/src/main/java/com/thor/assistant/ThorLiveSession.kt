@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -81,6 +82,8 @@ class ThorLiveSession(
         notifyState(State.CONNECTING, "SECURING LIVE CONNECTION")
         try {
             val token = ThorLiveTokenClient().create(workerUrl, voiceName)
+            // The user may leave Live Mode while the token request is in flight.
+            if (stopped.get()) return
             val ready = CompletableDeferred<Unit>()
             val request = Request.Builder()
                 .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=" + java.net.URLEncoder.encode(token, "UTF-8"))
@@ -125,7 +128,7 @@ class ThorLiveSession(
                     if (!stopped.get()) fail("Live connection closed: $reason")
                 }
             })
-            withContext(Dispatchers.IO) { ready.await() }
+            withTimeout(20_000L) { ready.await() }
             if (stopped.get()) return
             startAudio()
             notifyState(State.LISTENING, "LISTENING")
@@ -202,6 +205,8 @@ class ThorLiveSession(
             input.release()
             "Microphone could not be initialized."
         }
+        // Register immediately so every later setup failure releases the recorder.
+        recorder = input
 
         val minOutput = AudioTrack.getMinBufferSize(
             OUTPUT_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
