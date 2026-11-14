@@ -491,7 +491,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val systemVoiceSettings = makeButton("VOICE ENGINE SETTINGS")
         systemVoiceSettings.setOnClickListener {
             try {
-                startActivity(Intent(Settings.ACTION_TTS_SETTINGS))
+                startActivity(Intent("com.android.settings.TTS_SETTINGS"))
             } catch (_: Exception) {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             }
@@ -985,6 +985,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         super.onNewIntent(intent)
         setIntent(intent)
         processPendingApprovalIntent()
+        intent.getStringExtra("thor_background_command")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { command ->
+                intent.removeExtra("thor_background_command")
+                mainScope.launch {
+                    delay(350L)
+                    handleCommand(command)
+                }
+            }
     }
 
     private fun processPendingApprovalIntent() {
@@ -2028,20 +2037,6 @@ private fun launchIntent(
     override fun onResume() {
         super.onResume()
         stopService(Intent(this, ThorBackgroundWakeService::class.java))
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        intent.getStringExtra("thor_background_command")
-            ?.takeIf { it.isNotBlank() }
-            ?.let { command ->
-                intent.removeExtra("thor_background_command")
-                mainScope.launch {
-                    delay(350L)
-                    handleCommand(command)
-                }
-            }
     }
 
     override fun onDestroy() {
