@@ -48,22 +48,24 @@ class ThorAiProviderManager(private val context: Context) {
         val provider = runCatching {
             Provider.valueOf(prefs.getString("provider", Provider.GEMINI.name) ?: Provider.GEMINI.name)
         }.getOrDefault(Provider.GEMINI)
+        val suffix = provider.name
         return Settings(
             provider,
-            prefs.getString("model", provider.defaultModel) ?: provider.defaultModel,
-            prefs.getString("endpoint", provider.defaultEndpoint) ?: provider.defaultEndpoint,
-            decrypt(prefs.getString("api_key", null))
+            prefs.getString("model_$suffix", provider.defaultModel) ?: provider.defaultModel,
+            prefs.getString("endpoint_$suffix", provider.defaultEndpoint) ?: provider.defaultEndpoint,
+            decrypt(prefs.getString("api_key_$suffix", null))
         )
     }
 
     fun save(provider: Provider, model: String, endpoint: String, apiKey: String) {
         val encrypted = if (apiKey.isBlank()) null else encrypt(apiKey.trim())
+        val suffix = provider.name
         prefs.edit()
             .putString("provider", provider.name)
-            .putString("model", model.trim().ifBlank { provider.defaultModel })
-            .putString("endpoint", endpoint.trim().ifBlank { provider.defaultEndpoint })
+            .putString("model_$suffix", model.trim().ifBlank { provider.defaultModel })
+            .putString("endpoint_$suffix", endpoint.trim().ifBlank { provider.defaultEndpoint })
             .apply {
-                if (encrypted != null) putString("api_key", encrypted)
+                if (encrypted != null) putString("api_key_$suffix", encrypted)
             }
             .apply()
     }
