@@ -15,8 +15,19 @@ import java.net.URL
 class ThorLiveTokenClient {
     suspend fun create(workerUrl: String, voiceName: String): String = withContext(Dispatchers.IO) {
         val base = workerUrl.trim().trimEnd('/')
-        require(base.startsWith("https://") && base.endsWith(".workers.dev")) {
-            "Configure the HTTPS THOR Cloudflare Worker URL in Master Mode setup first."
+        val uri = runCatching { java.net.URI(base) }.getOrNull()
+        require(
+            base.length < 300 &&
+                uri != null &&
+                uri.scheme.equals("https", ignoreCase = true) &&
+                uri.host?.endsWith(".workers.dev", ignoreCase = true) == true &&
+                uri.userInfo == null &&
+                uri.port in -1..443 &&
+                uri.rawQuery == null &&
+                uri.rawFragment == null &&
+                uri.path.orEmpty().trimEnd('/').isEmpty()
+        ) {
+            "Configure a valid HTTPS THOR Live Worker URL in Live Mode settings."
         }
         val user = FirebaseAuth.getInstance().currentUser
             ?: error("Sign in to your THOR Firebase account before starting Live Mode.")

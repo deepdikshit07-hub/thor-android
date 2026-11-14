@@ -38,6 +38,7 @@ android {
 
  
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // Firebase AI Logic: Gemini access through Firebase's secure proxy.
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-ai")

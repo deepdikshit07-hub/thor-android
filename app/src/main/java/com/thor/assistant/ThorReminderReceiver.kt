@@ -109,6 +109,10 @@ class ThorReminderReceiver : BroadcastReceiver() {
                     NotificationChannel(CHANNEL, "THOR reminders", NotificationManager.IMPORTANCE_HIGH)
                 )
             }
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+            if (Build.VERSION.SDK_INT >= 26 &&
+                manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE
+            ) return false
             if (Build.VERSION.SDK_INT >= 33 &&
                 context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -131,8 +135,12 @@ class ThorReminderReceiver : BroadcastReceiver() {
                 .setContentIntent(openApp)
                 .setAutoCancel(true)
                 .build()
-            manager.notify(id.hashCode(), notification)
-            return true
+            return try {
+                manager.notify(id.hashCode(), notification)
+                true
+            } catch (_: SecurityException) {
+                false
+            }
         }
     }
 }

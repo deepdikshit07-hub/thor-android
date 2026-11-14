@@ -8,10 +8,12 @@ on:
       - main
       - thor-2.0-upgrade
       - 'experiment/**'
+      - 'feature/**'
   pull_request:
     branches:
       - main
       - 'experiment/**'
+      - 'feature/**'
 
 concurrency:
   group: thor-android-${{ github.event.pull_request.number || github.ref }}
@@ -90,4 +92,13 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish APK details
+        if: success()
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          echo "## THOR APK build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Size: $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact: THOR-debug-apk (download from Artifacts)" >> "$GITHUB_STEP_SUMMARY"
           

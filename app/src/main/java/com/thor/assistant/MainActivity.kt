@@ -670,14 +670,50 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         return body
     }
 
+    private fun liveServiceUrl(): String =
+        getSharedPreferences("thor_live_service", MODE_PRIVATE).getString("worker_url", "").orEmpty().trim()
+
+    private fun showLiveServiceSetupDialog() {
+        val endpoint = EditText(this).apply {
+            hint = "https://your-thor-worker.workers.dev"
+            setSingleLine(true)
+            setText(liveServiceUrl())
+        }
+        AlertDialog.Builder(this)
+            .setTitle("THOR Live Service Setup")
+            .setMessage("Enter the HTTPS Cloudflare Worker URL used for temporary Gemini Live access. This setting is separate from Master Mode.")
+            .setView(endpoint)
+            .setPositiveButton("SAVE & START") { _, _ ->
+                val value = endpoint.text.toString().trim().trimEnd('/')
+                val uri = runCatching { java.net.URI(value) }.getOrNull()
+                val valid = value.length < 300 &&
+                    uri != null &&
+                    uri.scheme.equals("https", ignoreCase = true) &&
+                    uri.host?.endsWith(".workers.dev", ignoreCase = true) == true &&
+                    uri.userInfo == null &&
+                    uri.port in -1..443 &&
+                    uri.rawQuery == null &&
+                    uri.rawFragment == null &&
+                    uri.path.orEmpty().trimEnd('/').isEmpty()
+                if (!valid) {
+                    addMessage("THOR", "Enter a valid HTTPS Cloudflare workers.dev URL without a path.")
+                    return@setPositiveButton
+                }
+                getSharedPreferences("thor_live_service", MODE_PRIVATE)
+                    .edit().putString("worker_url", value).apply()
+                startThorLive()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
     private fun startThorLive() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1006)
             return
         }
-        if (masterApprovalClient.baseUrl.isBlank()) {
-            addMessage("THOR", "Set the HTTPS Cloudflare Worker URL in Master Mode setup before starting Live Mode.")
-            showMasterModeSetupDialog()
+        if (liveServiceUrl().isBlank()) {
+            showLiveServiceSetupDialog()
             return
         }
         val auth = FirebaseAuth.getInstance()
@@ -740,7 +776,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         liveStatusText?.text = "SECURING LIVE CONNECTION"
         mainScope.launch {
             try {
-                session.start(masterApprovalClient.baseUrl, voiceName, languageName)
+                session.start(liveServiceUrl(), voiceName, languageName)
             } catch (error: Exception) {
                 if (liveSession === session) liveSession = null
                 liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
@@ -1392,6 +1428,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
             lower.contains("instagram") && (lower.contains("reel") || lower.contains("short video")) ->
                 startNavigationTask("com.instagram.android", "INSTAGRAM_REELS", "WAIT_REELS", 0)
+
+            lower in listOf("install offline ai", "load offline ai", "enable offline ai") ->
+                installOfflineAi()
 
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
@@ -2293,49 +2332,27 @@ private fun launchIntent(
 
 
     private fun scheduleReminder(command: String) {
-        val relative = Regex("""(?i)in\s+(\d+)\s+(minutes|minute|min|hours|hour|hr)""").find(command)
-        val timeMatch = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
-        val message = when {
-            relative != null -> command.substring(relative.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
-            timeMatch != null -> command.substring(timeMatch.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
-            else -> ""
+        val request = try {
+            ReminderCommandParser.parse(command)
+        } catch (error: IllegalArgumentException) {
+            addMessage("THOR", error.message ?: "I couldn't understand that reminder.")
+            return
         }
-        val triggerAt = when {
-            relative != null -> {
-                val amount = relative.groupValues[1].toLongOrNull() ?: 0L
-                val unit = relative.groupValues[2].lowercase(Locale.ROOT)
-                if (amount <= 0L || amount > 10080L) {
-                    addMessage("THOR", "Choose a reminder between 1 minute and 7 days from now.")
-                    return
-                }
-                System.currentTimeMillis() + amount * if (unit.startsWith("hour") || unit == "hr") 3_600_000L else 60_000L
+        val triggerAt = request.relativeDelayMillis?.let { System.currentTimeMillis() + it } ?: run {
+            val calendar = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, request.hour!!)
+                set(Calendar.MINUTE, request.minute!!)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
             }
-            timeMatch != null -> {
-                val hour = timeMatch.groupValues[1].toIntOrNull()
-                val minute = timeMatch.groupValues[2].toIntOrNull()
-                if (hour == null || minute == null || hour !in 0..23 || minute !in 0..59) {
-                    addMessage("THOR", "That time is invalid. Use 24-hour time, like 07:30.")
-                    return
-                }
-                val calendar = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, hour)
-                    set(Calendar.MINUTE, minute)
-                    set(Calendar.SECOND, 0)
-                    set(Calendar.MILLISECOND, 0)
-                    if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
-                }
-                calendar.timeInMillis
-            }
-            else -> {
-                addMessage("THOR", "Use: remind 07:30 Take my book, or remind in 10 minutes Take a break.")
-                return
-            }
+            calendar.timeInMillis
         }
-        val reminderText = message.ifBlank { "THOR reminder" }
+        val reminderText = request.message.ifBlank { "THOR reminder" }
         ThorReminderReceiver.schedule(this, triggerAt, reminderText)
         val whenText = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(triggerAt))
         addMessage("THOR", "Reminder scheduled for $whenText: $reminderText. Android may delay it in battery-saving modes.")
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+        if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1003)
     }
