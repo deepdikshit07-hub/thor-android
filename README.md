@@ -25,7 +25,7 @@ GitHub Actions builds a debug APK for the active pull request targeting `experim
 
 1. Open the repository's **Actions** tab.
 2. Select the latest successful **Build THOR APK** run for the experimental branch.
-3. Download the `THOR-debug-apk` artifact and extract `app-debug.apk`.
+3. Download the `THOR-APK-DOWNLOAD` artifact and extract `app-debug.apk`.
 4. Install it on an Android device after reviewing Android's installation prompt.
 
 The APK includes the offline model assets downloaded by CI and can therefore be very large. To keep startup responsive and avoid loading a large model into RAM unnecessarily, THOR loads Offline AI only when you tap its button or explicitly request an offline answer.
