@@ -15,7 +15,7 @@ import kotlinx.coroutines.withTimeout
  */
 object GeminiAssistant {
     private const val TAG = "THOR_GEMINI"
-    private const val REQUEST_TIMEOUT_MS = 12_000L
+    private const val REQUEST_TIMEOUT_MS = 30_000L
 
     private val model by lazy {
         Firebase.ai(backend = GenerativeBackend.googleAI())

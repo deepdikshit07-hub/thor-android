@@ -163,3 +163,51 @@ test("oversized POST bodies are rejected before route processing", async () => {
   }), env);
   assert.equal(response.status, 413);
 });
+
+
+function liveTokenRequest(voiceName = "Charon") {
+  return new Request("https://thor.test/v1/live-token", {
+    method: "POST",
+    headers: { authorization: "Bearer test-id-token", "content-type": "application/json" },
+    body: JSON.stringify({ voiceName })
+  });
+}
+
+test("Gemini Live token route requires a server-side API key", async () => {
+  const { env } = makeEnv("requester-uid");
+  const response = await worker.fetch(liveTokenRequest(), env);
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /not configured/i);
+});
+
+test("Gemini Live token route rejects voice names outside the allowlist", async () => {
+  const { env, writes } = makeEnv("requester-uid");
+  env.GEMINI_API_KEY = "server-only-test-key";
+  const response = await worker.fetch(liveTokenRequest("UntrustedVoice"), env);
+  assert.equal(response.status, 400);
+  assert.equal(writes.length, 0);
+});
+
+test("Gemini Live token route returns a constrained short-lived token", async () => {
+  const { env, writes } = makeEnv("requester-uid");
+  env.GEMINI_API_KEY = "server-only-test-key";
+  globalThis.fetch = async (url, options) => {
+    if (String(url).includes("identitytoolkit.googleapis.com")) {
+      return new Response(JSON.stringify({ users: [{ localId: "requester-uid" }] }), { status: 200 });
+    }
+    assert.match(String(url), /generativelanguage\.googleapis\.com\/v1beta\/auth_tokens/);
+    assert.equal(options.headers["x-goog-api-key"], "server-only-test-key");
+    const requestBody = JSON.parse(options.body);
+    assert.equal(requestBody.uses, 1);
+    assert.equal(requestBody.liveConnectConstraints.model, "models/gemini-3.8-live");
+    assert.equal(requestBody.liveConnectConstraints.config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Charon");
+    return new Response(JSON.stringify({ name: "short-lived-live-token" }), {
+      status: 200, headers: { "content-type": "application/json" }
+    });
+  };
+  const response = await worker.fetch(liveTokenRequest(), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { token: "short-lived-live-token", expiresInSeconds: 1800 });
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /live_token_requests/);
+});

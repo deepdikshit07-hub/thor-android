@@ -13,3 +13,4 @@ FIREBASE_PROJECT_ID = "thor-ai-2791b"
 # Configure these as Worker secrets, never in this file:
 # MASTER_UID
 # FIREBASE_SERVICE_ACCOUNT_JSON
+# GEMINI_API_KEY

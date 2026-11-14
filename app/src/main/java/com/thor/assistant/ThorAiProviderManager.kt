@@ -5,8 +5,6 @@ import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyStore
@@ -27,6 +25,8 @@ import kotlinx.coroutines.withContext
 class ThorAiProviderManager(private val context: Context) {
     enum class Provider(val title: String, val defaultModel: String, val defaultEndpoint: String) {
         GEMINI("Google Gemini (Firebase)", "gemini-3.8-flash", ""),
+        GEMINI_API("Google Gemini (own API key)", "gemini-2.5-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
+        OPENAI("OpenAI / ChatGPT API", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions"),
         GROQ("Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions"),
         OPENROUTER("OpenRouter", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
         CLOUDFLARE("Cloudflare Workers AI", "@cf/meta/llama-3.1-8b-instruct", ""),
@@ -70,6 +70,10 @@ class ThorAiProviderManager(private val context: Context) {
             .apply()
     }
 
+    fun clearKey(provider: Provider) {
+        prefs.edit().remove("api_key_${provider.name}").apply()
+    }
+
     suspend fun ask(prompt: String, maxTokens: Int = 256): String = withContext(Dispatchers.IO) {
         val config = settings()
         val blockedUntil = prefs.getLong("cooldown_until_${config.provider.name}", 0L)
@@ -80,6 +84,10 @@ class ThorAiProviderManager(private val context: Context) {
         require(config.provider != Provider.LOCAL) { "Local AI is selected." }
         require(config.provider != Provider.GEMINI) { "Gemini requests must use Firebase AI Logic." }
         require(config.apiKey.isNotBlank()) { "Add an API key for ${config.provider.title} in AI Provider settings." }
+        require(config.model.isNotBlank()) { "Enter a model name." }
+        if (config.provider == Provider.GEMINI_API) {
+            return@withContext askGeminiApi(config, prompt, maxTokens)
+        }
         val endpoint = config.endpoint.trim()
         require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
         require(config.model.isNotBlank()) { "Enter a model name." }
@@ -109,7 +117,7 @@ class ThorAiProviderManager(private val context: Context) {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+            val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val detail = runCatching {
                     JSONObject(response).optJSONObject("error")?.optString("message")
@@ -135,6 +143,57 @@ class ThorAiProviderManager(private val context: Context) {
         } catch (error: Exception) {
             Log.e("THOR_AI_PROVIDER", "AI provider request failed", error)
             throw error
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+
+    private fun askGeminiApi(config: Settings, prompt: String, maxTokens: Int): String {
+        val endpoint = config.endpoint.trim().replace("{model}", config.model)
+        require(endpoint.startsWith("https://", ignoreCase = true)) { "Gemini endpoint must use HTTPS." }
+        val body = JSONObject()
+            .put("contents", JSONArray().put(JSONObject()
+                .put("role", "user")
+                .put("parts", JSONArray().put(JSONObject().put("text", prompt.take(4000))))))
+            .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens.coerceIn(64, 512)))
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12_000
+            readTimeout = 25_000
+            doOutput = true
+            setRequestProperty("x-goog-api-key", config.apiKey)
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) {
+                val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }
+                    .getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
+                if (status == 429) {
+                    prefs.edit()
+                        .putLong("cooldown_until_${config.provider.name}", System.currentTimeMillis() + 60L * 60L * 1000L)
+                        .apply()
+                }
+                throw IllegalStateException(when (status) {
+                    401, 403 -> "Gemini rejected the API key or permissions ($detail)."
+                    429 -> "Gemini API quota/rate limit reached. A one-hour cooldown is now active. ($detail)"
+                    else -> "Gemini API request failed: $detail"
+                })
+            }
+            val parts = JSONObject(raw).optJSONArray("candidates")
+                ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+            val answer = buildString {
+                if (parts != null) for (i in 0 until parts.length()) {
+                    val value = parts.optJSONObject(i)?.optString("text").orEmpty()
+                    if (value.isNotBlank()) { if (isNotEmpty()) append('\n'); append(value) }
+                }
+            }
+            return answer.takeIf { it.isNotBlank() } ?: error("Gemini returned no text. Check the selected model and key permissions.")
         } finally {
             connection.disconnect()
         }

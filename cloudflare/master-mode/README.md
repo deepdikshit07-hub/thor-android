@@ -43,6 +43,12 @@ The Android branch includes the Worker API client, Firebase Messaging notificati
 
 On Device A, open THOR > MASTER MODE SETUP, enter the Worker URL and the trusted Firebase account, then choose **SET UP DEVICE A**. On Device B, open the same dialog, enter the Worker URL and Device B Firebase account, then choose **REQUEST ON DEVICE B**. Device A receives a notification; tap it and approve only if you initiated the request.
 
+## Gemini Live token provisioning
+
+The same authenticated Worker now exposes `POST /v1/live-token` for the Android Live tab. It validates the Firebase ID token, accepts only an allowlisted voice name, limits each Firebase UID to 12 token requests per hour using the D1 `live_token_requests` table, and requests a single-use 30-minute Gemini Live token constrained to the `gemini-3.8-live` model and audio output. The permanent Google AI Studio key remains a Cloudflare Worker secret; the app receives only the short-lived token.
+
+Add the Worker secret `GEMINI_API_KEY` in Cloudflare. Apply the updated D1 schema before deploying so the token-rate-limit table exists. Do not place the key in `wrangler.toml`, GitHub Actions variables, Android resources, or the repository.
+
 ## API outline
 
 All endpoints except `/health` require `Authorization: Bearer <Firebase ID token>`.
@@ -57,6 +63,7 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 - `GET /v1/sessions/active?deviceId=...`: Device A lists active sessions.
 - `POST /v1/sessions/{sessionId}/end`: Device B ends its own session ("I quit").
 - `GET /v1/sessions/{sessionId}/check`: Device B checks whether its session is still active.
+- `POST /v1/live-token`: authenticated Android client requests a single-use constrained Gemini Live token (requires `GEMINI_API_KEY`).
 
 ## Deployment limitations and operational notes
 

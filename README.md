@@ -1,51 +1,64 @@
 # THOR Android Assistant
 
 THOR is an experimental Android personal assistant project. The active development branch is
-`experiment/boss-speaker-verification`; keep it separate from the main branch while features are
-being validated.
+`feature/thor-live-mode`; its draft pull request targets `experiment/boss-speaker-verification`. Keep it separate from the main branch while features are being validated.
 
 ## Current project features
 
-- Dark, blue-accented assistant interface with five bottom-navigation sections.
+- Dark, blue-accented assistant interface with six bottom-navigation sections.
+- Dedicated THOR LIVE bottom-navigation section with animated energy core, bidirectional Gemini Live audio, voice interruption support, and session-only captions (no local chat transcript storage).
 - Animated holographic reactor HUD and startup animation.
 - Custom THOR launcher artwork.
-- Text commands, Android speech-recognition handoff, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
+- Text commands, Android speech-recognition handoff, foreground-service Background Wake with an ongoing microphone notification, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
 - English, Hindi, and Bengali response selection.
 - Local notes, tasks, user-taught lessons, and reminders.
 - App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
-- Optional on-device text generation using the bundled Qwen LiteRT model.
-- Per-device AI Provider Manager: choose Firebase Gemini, Groq, OpenRouter, Cloudflare Workers AI, a custom OpenAI-compatible endpoint, or local-only AI. Each provider keeps its own model, endpoint, and encrypted API credential on that installation.
+- On-device text generation using the bundled Qwen LiteRT model (about 586 MB). The model is included in the APK so offline AI is ready without a separate model download.
+- Per-device AI Provider Manager: choose Firebase Gemini, direct Gemini API with your own key, OpenAI / ChatGPT API, Groq, OpenRouter, Cloudflare Workers AI, a custom OpenAI-compatible endpoint, or local-only AI. Each provider keeps its own model, endpoint, and encrypted API credential on that installation.
 - Experimental WeSpeaker embedding enrollment; automatic speaker identification is not enabled.
 - Remote Master Mode foundation using Cloudflare Worker/D1, Firebase Authentication, FCM, and
   Device A biometric signing.
 
 ## Build and download
 
-GitHub Actions builds a debug APK when commits are pushed to `experiment/**`.
+GitHub Actions builds a debug APK for the active pull request targeting `experiment/boss-speaker-verification` and for supported workflow branches.
 
 1. Open the repository's **Actions** tab.
 2. Select the latest successful **Build THOR APK** run for the experimental branch.
 3. Download the `THOR-debug-apk` artifact and extract `app-debug.apk`.
 4. Install it on an Android device after reviewing Android's installation prompt.
 
-The APK includes the offline model assets downloaded by CI and can therefore be very large.
+The APK includes the offline model assets downloaded by CI and can therefore be very large. To keep startup responsive and avoid loading a large model into RAM unnecessarily, THOR loads Offline AI only when you tap its button or explicitly request an offline answer.
+
+## THOR Live Mode setup
+
+THOR Live uses Google's bidirectional Gemini Live API rather than the normal text-chat request path. It streams microphone PCM audio directly to Gemini over a WebSocket and plays native model audio; the selected THOR voice style maps to a supported Gemini prebuilt voice. Live captions are transient UI text only. THOR does not append Live turns to the chat screen or write them to the app's chat/history storage. Ending the session closes the socket, stops microphone capture and playback, and clears the latest caption.
+
+Live Mode uses the Cloudflare Worker URL already configured in **Master Mode Setup**. It also requires:
+1. Enable **Anonymous** sign-in in Firebase Authentication (or sign in through an existing THOR Firebase account).
+2. In Cloudflare Worker secrets, add `GEMINI_API_KEY` containing a Google AI Studio API key with Gemini Live API access. Never put this key in the APK, GitHub, or chat.
+3. Apply the updated D1 schema from `cloudflare/master-mode/schema.sql` using `npm run db:migrate:remote`, then deploy the updated Worker using `npm run deploy`.
+4. Keep the Firebase Web API key configured as `FIREBASE_WEB_API_KEY` Worker secret. The Worker authenticates Firebase ID tokens and limits token issuance to 12 requests per account per hour. Each issued Live token is single-use and short-lived.
+5. Open THOR's **LIVE** tab and start a session. The app uses the Worker URL configured on that device.
+
+Live Mode uses network data continuously while active and may incur Gemini API usage charges or quota limits. Use Wi-Fi or review the provider's pricing/quota before long sessions. Headphones are recommended to reduce speaker-to-microphone echo. The app stops the live microphone session when it leaves the foreground.
 
 ## AI provider setup
 
-Open **Settings → AI Provider** to select the provider for that installation. Gemini uses the existing Firebase AI Logic integration. Other hosted providers require the user's own API key, model ID, and (where applicable) HTTPS chat-completions endpoint. Groq and OpenRouter have preset endpoints; Cloudflare Workers AI requires the account-specific endpoint. The generic adapter supports OpenAI-compatible chat-completions APIs only.
+Open **Settings → AI Provider** to select the provider for that installation. Firebase Gemini uses THOR's managed Firebase AI Logic connection. Direct Gemini API accepts a Google AI Studio key; OpenAI / ChatGPT API accepts an OpenAI API key; Groq and OpenRouter have preset endpoints; Cloudflare Workers AI requires the account-specific endpoint; and Custom accepts an OpenAI-compatible chat-completions API. Each provider has its own model and key slot. Users can replace or remove saved keys in the app. Keys are encrypted at rest with Android Keystore AES-GCM and remain on that installation. API usage is billed separately from consumer subscriptions (for example, ChatGPT Plus does not include OpenAI API credits). Free tiers, quotas, and terms are controlled by each provider. A normal model API key does not automatically enable live web search or guarantee current affairs are up to date; that requires a provider's search/grounding feature or a separate search integration. Selecting Local-only keeps THOR's AI prompts on-device.
 
 Credentials are encrypted at rest using an Android Keystore AES-GCM key. Android backup is disabled for this app. Credentials are not embedded in the APK or shared between devices. Never paste API keys into chat, source control, screenshots, or issue reports. A provider's free tier, rate limits, model names, and availability are controlled by that provider and can change. A 429 response triggers a one-hour per-provider cooldown and THOR falls back to local AI. This is a client-side BYOK design; a production multi-user service should proxy requests through a trusted backend rather than distribute a shared secret.
 
 ## Important limitations
 
-- A successful CI build is not a physical-device test.
+- A successful CI build is not a physical-device test. The repository currently has no Android instrumentation test suite, so lint and the unit-test task do not prove real microphone, speaker, notification, or device compatibility.
 - Android's speech-recognition service may require internet; requesting offline recognition does not guarantee offline speech-to-text.
 - Hybrid TTS selects from voices installed in the Android speech engine; online voices are used only when the device reports validated internet, with local voices preferred offline. Voice quality and language coverage depend on the installed engine and voice data; it does not use or reproduce ChatGPT Live's proprietary voice.
 - Automatic Boss voice recognition is not active; the speaker embedding work is experimental and not authentication.
 - Remote Master Mode needs the Cloudflare Worker, D1 schema, Firebase secrets/accounts, FCM, and two-device testing.
-- The current app does not yet enforce Master Mode as a gate for additional protected commands.
+- Remote Master Mode session administration is enforced by the Cloudflare Worker using the configured master UID and registered approver device. It is not a general app lock: ordinary phone controls remain available to anyone who can unlock and use this installation.
 - Accessibility navigation requires the user to enable THOR Navigation manually in Android settings.
-- Android battery management and notification permissions can affect reminders and FCM delivery.
+- Background Wake requires microphone and notification permissions and uses an Android foreground service; battery management and speech-provider behavior can still affect availability. Reminder alarms and FCM delivery can also be delayed by Android power and notification settings.
 
 ## Security and configuration
 

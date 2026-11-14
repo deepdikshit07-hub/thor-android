@@ -1,5 +1,6 @@
 package com.thor.assistant
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.StatFs
 import com.google.ai.edge.litertlm.Backend
@@ -31,6 +32,7 @@ class ThorOfflineAi(private val context: Context) {
         private const val MODEL_URL =
             "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm?download=true"
         private const val MIN_FREE_BYTES = 700L * 1024L * 1024L
+        private const val MIN_MODEL_BYTES = 500_000_000L
     }
 
     private val lock = Mutex()
@@ -38,7 +40,7 @@ class ThorOfflineAi(private val context: Context) {
     private var engine: Engine? = null
     private var conversation: Conversation? = null
 
-    fun isModelInstalled(): Boolean = modelFile.exists() && modelFile.length() > 100_000_000L
+    fun isModelInstalled(): Boolean = modelFile.exists() && modelFile.length() >= MIN_MODEL_BYTES
     fun hasBundledModel(): Boolean = try {
         context.assets.open(MODEL_FILE_NAME).close()
         true
@@ -91,7 +93,7 @@ class ThorOfflineAi(private val context: Context) {
                     onProgress(downloaded, if (total > 0) total else downloaded)
                 }
             }
-            if (partial.length() < 100_000_000L) error("The downloaded model file is incomplete.")
+            if (partial.length() < MIN_MODEL_BYTES) error("The downloaded model file is incomplete. Please retry the download.")
             if (modelFile.exists()) modelFile.delete()
             if (!partial.renameTo(modelFile)) error("Could not finalize the downloaded model.")
         } catch (error: Exception) {
@@ -108,44 +110,78 @@ class ThorOfflineAi(private val context: Context) {
             if (!isModelInstalled() && hasBundledModel()) {
                 val directory = modelFile.parentFile ?: error("Cannot access THOR model folder.")
                 if (!directory.exists() && !directory.mkdirs()) error("Could not create THOR model folder.")
-                context.assets.open(MODEL_FILE_NAME).use { input ->
-                    FileOutputStream(modelFile).use { output ->
-                        input.copyTo(output, 1024 * 1024)
-                        output.fd.sync()
+                val freeBytes = StatFs(context.filesDir.absolutePath).availableBytes
+                if (freeBytes < MIN_FREE_BYTES) {
+                    error("THOR needs at least 700 MB of free storage to prepare Offline AI.")
+                }
+                val partial = File(directory, "$MODEL_FILE_NAME.part")
+                try {
+                    context.assets.open(MODEL_FILE_NAME).use { input ->
+                        FileOutputStream(partial).use { output ->
+                            input.copyTo(output, 1024 * 1024)
+                            output.fd.sync()
+                        }
                     }
+                    if (partial.length() < MIN_MODEL_BYTES) {
+                        error("The bundled offline model could not be copied completely. Free storage and reinstall or retry.")
+                    }
+                    if (modelFile.exists()) modelFile.delete()
+                    if (!partial.renameTo(modelFile)) error("Could not finalize the bundled offline model.")
+                } catch (error: Exception) {
+                    partial.delete()
+                    throw error
                 }
             }
             if (!isModelInstalled()) error("Offline model is not installed or bundled.")
 
-            val candidate = Engine(
-                EngineConfig(
-                    modelPath = modelFile.absolutePath,
-                    backend = Backend.CPU(),
-                    cacheDir = context.cacheDir.absolutePath
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memoryInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memoryInfo)
+            val minimumRuntimeMemory = 512L * 1024L * 1024L
+            if (memoryInfo.lowMemory || memoryInfo.availMem < minimumRuntimeMemory) {
+                error("Your phone is low on available memory for Offline AI. Close some apps and try again.")
+            }
+
+            val candidate = try {
+                Engine(
+                    EngineConfig(
+                        modelPath = modelFile.absolutePath,
+                        backend = Backend.CPU(),
+                        cacheDir = context.cacheDir.absolutePath
+                    )
                 )
-            )
-            // Do not retain an engine if native initialization fails.
-            candidate.initialize()
-            val localConversation = candidate.createConversation(
-                ConversationConfig(
-                    systemInstruction = Contents.of(
-                        "You are THOR, a helpful personal AI assistant. Work fully offline. " +
-                            "Understand and reply naturally in English, Hindi, Bengali, and mixed " +
-                            "English-Bengali (Banglish). Match the user's language, script, tone, " +
-                            "casualness, slang, abbreviations, and level of formality. Understand " +
-                            "common and unusual everyday slang from context; do not force slang " +
-                            "when the user is formal. Be friendly, clear, accurate, and concise. " +
-                            "If unsure, say so instead of inventing facts. You cannot access the " +
-                            "internet or control phone features unless THOR's Android app explicitly " +
-                            "offers that action."
-                    ),
-                    samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.7),
-                    thinkingConfig = ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0),
-                    maxOutputToken = 256
+            } catch (error: OutOfMemoryError) {
+                throw IllegalStateException("There is not enough free memory to start Offline AI. Close other apps and retry.", error)
+            }
+            try {
+                candidate.initialize()
+                val localConversation = candidate.createConversation(
+                    ConversationConfig(
+                        systemInstruction = Contents.of(
+                            "You are THOR, a helpful personal AI assistant. Work fully offline. " +
+                                "Understand and reply naturally in English, Hindi, Bengali, and mixed " +
+                                "English-Bengali (Banglish). Match the user's language, script, tone, " +
+                                "casualness, slang, abbreviations, and level of formality. Understand " +
+                                "common and unusual everyday slang from context; do not force slang " +
+                                "when the user is formal. Be friendly, clear, accurate, and concise. " +
+                                "If unsure, say so instead of inventing facts. You cannot access the " +
+                                "internet or control phone features unless THOR's Android app explicitly " +
+                                "offers that action."
+                        ),
+                        samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.7),
+                        thinkingConfig = ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0),
+                        maxOutputToken = 256
+                    )
                 )
-            )
-            engine = candidate
-            conversation = localConversation
+                engine = candidate
+                conversation = localConversation
+            } catch (error: OutOfMemoryError) {
+                try { candidate.close() } catch (_: Exception) {}
+                throw IllegalStateException("Offline AI ran out of memory while loading. Close other apps and try again.", error)
+            } catch (error: Exception) {
+                try { candidate.close() } catch (_: Exception) {}
+                throw error
+            }
         }
     }
 

@@ -8,15 +8,23 @@ on:
       - main
       - thor-2.0-upgrade
       - 'experiment/**'
+      - 'feature/**'
   pull_request:
     branches:
       - main
+      - 'experiment/**'
+      - 'feature/**'
+
+concurrency:
+  group: thor-android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
 
     steps:
@@ -71,11 +79,29 @@ jobs:
       - name: Build debug APK with bundled offline AI and speaker model
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Validate APK artifact
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.thor.assistant'"
+
       - name: Upload APK
+        id: upload_apk
         uses: actions/upload-artifact@v4
         with:
-          name: THOR-debug-apk
+          name: THOR-APK-DOWNLOAD
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+
+      - name: Publish APK details
+        if: success()
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          echo "## THOR APK build" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Size: $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact: THOR-APK-DOWNLOAD" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Download link: ${{ steps.upload_apk.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
           

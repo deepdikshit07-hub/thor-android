@@ -13,6 +13,10 @@ on:
       - 'cloudflare/master-mode/**'
       - '.github/workflows/worker-check.yml'
 
+concurrency:
+  group: thor-worker-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

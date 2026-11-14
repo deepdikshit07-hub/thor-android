@@ -28,6 +28,7 @@ android {
     }
 
 
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -37,6 +38,7 @@ android {
 
  
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // Firebase AI Logic: Gemini access through Firebase's secure proxy.
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-ai")
@@ -47,6 +49,8 @@ dependencies {
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // WebSocket transport for bidirectional Gemini Live audio.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // On-device multilingual language model (downloaded separately from the APK).
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
     // LiteRT runtime for WeSpeaker embeddings.
