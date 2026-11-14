@@ -631,7 +631,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(cyan)
         }, matchWrap())
         body.addView(TextView(this).apply {
-            text = "REAL-TIME VOICE • PRIVATE SESSION • NO CHAT HISTORY"
+            text = "LIVE AUDIO • TEMPORARY SESSION • NO CHAT HISTORY"
             textSize = 9f
             gravity = Gravity.CENTER
             letterSpacing = 0.07f
@@ -734,7 +734,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 liveStatusText?.text = detail
                 liveToggleButton?.text = if (state == ThorLiveSession.State.IDLE ||
                     state == ThorLiveSession.State.ERROR) "START LIVE SESSION" else "END LIVE SESSION"
-                if (state == ThorLiveSession.State.IDLE) {
+                if (state == ThorLiveSession.State.ERROR && liveSession === session) liveSession = null
+                if (state == ThorLiveSession.State.IDLE || state == ThorLiveSession.State.ERROR) {
                     liveCaptionText?.text = "Your live conversation has ended. No transcript was saved."
                 }
             }
