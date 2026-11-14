@@ -125,7 +125,8 @@ class ThorNavigationService : AccessibilityService() {
             val node = queue.removeFirst()
             val label = (node.text?.toString() ?: node.contentDescription?.toString())
                 .orEmpty().trim().lowercase(Locale.ROOT)
-            if (label in labels) return node
+            val baseLabel = label.substringBefore(",").substringBefore(" •").trim()
+            if (baseLabel in labels || labels.any { label.startsWith("$it ") }) return node
             for (i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
         }
         return null
