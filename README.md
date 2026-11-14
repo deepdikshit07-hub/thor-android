@@ -9,7 +9,7 @@ being validated.
 - Dark, blue-accented assistant interface with five bottom-navigation sections.
 - Animated holographic reactor HUD and startup animation.
 - Custom THOR launcher artwork.
-- Text commands, Android speech-recognition handoff, and Android Text-to-Speech.
+- Text commands, Android speech-recognition handoff, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
 - English, Hindi, and Bengali response selection.
 - Local notes, tasks, user-taught lessons, and reminders.
 - App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
@@ -33,7 +33,7 @@ The APK includes the offline model assets downloaded by CI and can therefore be 
 
 - A successful CI build is not a physical-device test.
 - Android's speech-recognition service may require internet; requesting offline recognition does not guarantee offline speech-to-text.
-- Text-to-Speech language availability depends on installed voice data.
+- Hybrid TTS selects from voices installed in the Android speech engine; online voices are used only when the device reports validated internet, with local voices preferred offline. Voice quality and language coverage depend on the installed engine and voice data; it does not use or reproduce ChatGPT Live's proprietary voice.
 - Automatic Boss voice recognition is not active; the speaker embedding work is experimental and not authentication.
 - Remote Master Mode needs the Cloudflare Worker, D1 schema, Firebase secrets/accounts, FCM, and two-device testing.
 - The current app does not yet enforce Master Mode as a gate for additional protected commands.
