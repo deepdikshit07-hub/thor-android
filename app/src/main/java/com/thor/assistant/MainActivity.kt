@@ -1,6 +1,13 @@
 package com.thor.assistant
 
 import androidx.fragment.app.FragmentActivity
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.NoCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.auth.GoogleAuthProvider
 import android.app.AlertDialog
 import android.Manifest
 import android.content.pm.PackageManager
@@ -1013,36 +1020,77 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setSingleLine(true)
             setText(masterApprovalClient.baseUrl)
         }
-        val email = EditText(this).apply {
-            hint = "Firebase account email"
-            setSingleLine(true)
-            setText(ThorMasterModeConfig.MASTER_EMAIL)
-        }
-        val password = EditText(this).apply {
-            hint = "Firebase account password"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine(true)
-        }
         panel.addView(endpoint)
-        panel.addView(email)
-        panel.addView(password)
         AlertDialog.Builder(this)
             .setTitle("Remote Master Mode")
-            .setMessage("Sign in with a Firebase Email/Password account. Device A must use the account whose UID is configured as MASTER_UID in Cloudflare. Device B should use its own Firebase account.")
+            .setMessage("Continue with your Google account. Device A must use the Google account whose Firebase UID is configured as MASTER_UID in Cloudflare. Device B must use a different Google account.")
             .setView(panel)
             .setPositiveButton("SET UP DEVICE A") { _, _ ->
                 masterApprovalClient.baseUrl = endpoint.text.toString()
-                authenticateAndRegisterApprover(email.text.toString().trim(), password.text.toString())
+                authenticateAndRegisterApprover()
             }
             .setNegativeButton("REQUEST ON DEVICE B") { _, _ ->
                 masterApprovalClient.baseUrl = endpoint.text.toString()
-                authenticateAndRequestMaster(email.text.toString().trim(), password.text.toString())
+                authenticateAndRequestMaster()
             }
             .setNeutralButton("CANCEL", null)
             .show()
     }
 
-    private fun authenticateAndRegisterApprover(email: String, password: String) {
+    /**
+     * Authenticates through Android Credential Manager, then exchanges the Google
+     * ID token for a Firebase session. No Google password is collected or stored.
+     */
+    private fun signInWithGoogle(onComplete: (Boolean) -> Unit) {
+        val clientIdResource = resources.getIdentifier("default_web_client_id", "string", packageName)
+        if (clientIdResource == 0) {
+            addMessage("THOR", "Google sign-in is not configured yet. Enable Google in Firebase Authentication, add this app's SHA fingerprints, download the updated google-services.json, and rebuild THOR.")
+            onComplete(false)
+            return
+        }
+        val serverClientId = getString(clientIdResource)
+        mainScope.launch {
+            try {
+                val manager = CredentialManager.create(this@MainActivity)
+                fun request(authorizedOnly: Boolean): GetCredentialRequest {
+                    val option = GetGoogleIdOption.Builder()
+                        .setServerClientId(serverClientId)
+                        .setFilterByAuthorizedAccounts(authorizedOnly)
+                        .build()
+                    return GetCredentialRequest.Builder()
+                        .addCredentialOption(option)
+                        .build()
+                }
+                val credential = try {
+                    manager.getCredential(this@MainActivity, request(true))
+                } catch (_: NoCredentialException) {
+                    manager.getCredential(this@MainActivity, request(false))
+                }
+                val googleCredential = credential as? CustomCredential
+                    ?: error("Choose a Google account to continue.")
+                if (googleCredential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    error("Google sign-in returned an unsupported credential.")
+                }
+                val idToken = GoogleIdTokenCredential.createFrom(googleCredential.data).idToken
+                FirebaseAuth.getInstance()
+                    .signInWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                    .addOnSuccessListener {
+                        val account = FirebaseAuth.getInstance().currentUser?.email ?: "Google account"
+                        addMessage("THOR", "Signed in securely as $account.")
+                        onComplete(true)
+                    }
+                    .addOnFailureListener { error ->
+                        addMessage("THOR", "Firebase Google sign-in failed: ${error.localizedMessage}")
+                        onComplete(false)
+                    }
+            } catch (error: Exception) {
+                addMessage("THOR", "Google sign-in cancelled or failed: ${error.localizedMessage ?: error.javaClass.simpleName}")
+                onComplete(false)
+            }
+        }
+    }
+
+    private fun authenticateAndRegisterApprover() {
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -1050,86 +1098,72 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1005)
             return
         }
-        if (email.isBlank() || password.isBlank()) {
-            addMessage("THOR", "Enter the trusted Device A Firebase email and password.")
-            return
-        }
-        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
-            .addOnSuccessListener {
-                try {
-                    val approval = ThorDeviceApproval(this)
-                    val publicKey = if (approval.hasKey()) approval.publicKeyBase64() else approval.createKey()
-                    FirebaseMessaging.getInstance().token
-                        .addOnSuccessListener { token ->
-                            mainScope.launch {
-                                try {
-                                    masterApprovalClient.registerApprover(publicKey, token)
-                                    addMessage("THOR", "Device A is registered as the trusted approval phone. Keep notifications enabled.")
-                                    speak("Trusted phone registered.")
-                                } catch (error: Exception) {
-                                    addMessage("THOR", "Device A registration failed: ${error.message}")
-                                }
+        signInWithGoogle { signedIn ->
+            if (!signedIn) return@signInWithGoogle
+            try {
+                val approval = ThorDeviceApproval(this)
+                val publicKey = if (approval.hasKey()) approval.publicKeyBase64() else approval.createKey()
+                FirebaseMessaging.getInstance().token
+                    .addOnSuccessListener { token ->
+                        mainScope.launch {
+                            try {
+                                masterApprovalClient.registerApprover(publicKey, token)
+                                addMessage("THOR", "Device A is registered as the trusted approval phone. Keep notifications enabled.")
+                                speak("Trusted phone registered.")
+                            } catch (error: Exception) {
+                                addMessage("THOR", "Device A registration failed: ${error.message}")
                             }
                         }
-                        .addOnFailureListener { error ->
-                            addMessage("THOR", "Could not obtain the notification token: ${error.message}")
-                        }
-                } catch (error: Exception) {
-                    addMessage("THOR", "Secure key setup failed: ${error.message}")
-                }
+                    }
+                    .addOnFailureListener { error ->
+                        addMessage("THOR", "Could not obtain the notification token: ${error.message}")
+                    }
+            } catch (error: Exception) {
+                addMessage("THOR", "Secure key setup failed: ${error.message}")
             }
-            .addOnFailureListener { error ->
-                addMessage("THOR", "Firebase sign-in failed: ${error.localizedMessage}")
-            }
+        }
     }
 
-    private fun authenticateAndRequestMaster(email: String, password: String) {
-        if (email.isBlank() || password.isBlank()) {
-            addMessage("THOR", "Enter this Device B Firebase email and password.")
-            return
-        }
-        FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
-            .addOnSuccessListener {
-                mainScope.launch {
-                    try {
-                        masterApprovalClient.registerRequester()
-                        val request = masterApprovalClient.requestApproval()
-                        val requestId = request.getString("requestId")
-                        addMessage("THOR", "Approval request sent to Device A. Waiting for fingerprint approval...")
-                        val deadline = System.currentTimeMillis() + 180_000L
-                        while (System.currentTimeMillis() < deadline) {
-                            val result = masterApprovalClient.requestResult(requestId)
-                            when (result.optString("status")) {
-                                "approved" -> {
-                                    val customToken = result.optString("customToken")
-                                    val sessionId = result.optString("sessionId")
-                                    if (customToken.isBlank() || sessionId.isBlank()) error("The approval server returned an incomplete session.")
-                                    masterApprovalClient.saveSessionId(sessionId)
-                                    FirebaseAuth.getInstance().signInWithCustomToken(customToken)
-                                        .addOnSuccessListener {
-                                            masterVerifiedThisSession = true
-                                            addMessage("THOR", "Fingerprint approval verified. Master Mode is active on this device.")
-                                            speak("Master Mode unlocked.")
-                                        }
-                                        .addOnFailureListener { authError ->
-                                            masterApprovalClient.clearSessionId()
-                                            addMessage("THOR", "Master session sign-in failed: ${authError.localizedMessage}")
-                                        }
-                                    return@launch
-                                }
-                                "expired", "denied", "revoked" -> error("The approval request is ${result.optString("status")}.")
+    private fun authenticateAndRequestMaster() {
+        signInWithGoogle { signedIn ->
+            if (!signedIn) return@signInWithGoogle
+            mainScope.launch {
+                try {
+                    masterApprovalClient.registerRequester()
+                    val request = masterApprovalClient.requestApproval()
+                    val requestId = request.getString("requestId")
+                    addMessage("THOR", "Approval request sent to Device A. Waiting for fingerprint approval...")
+                    val deadline = System.currentTimeMillis() + 180_000L
+                    while (System.currentTimeMillis() < deadline) {
+                        val result = masterApprovalClient.requestResult(requestId)
+                        when (result.optString("status")) {
+                            "approved" -> {
+                                val customToken = result.optString("customToken")
+                                val sessionId = result.optString("sessionId")
+                                if (customToken.isBlank() || sessionId.isBlank()) error("The approval server returned an incomplete session.")
+                                masterApprovalClient.saveSessionId(sessionId)
+                                FirebaseAuth.getInstance().signInWithCustomToken(customToken)
+                                    .addOnSuccessListener {
+                                        masterVerifiedThisSession = true
+                                        addMessage("THOR", "Fingerprint approval verified. Master Mode is active on this device.")
+                                        speak("Master Mode unlocked.")
+                                    }
+                                    .addOnFailureListener { authError ->
+                                        masterApprovalClient.clearSessionId()
+                                        addMessage("THOR", "Master session sign-in failed: ${authError.localizedMessage}")
+                                    }
+                                return@launch
                             }
-                            delay(3000L)
+                            "expired", "denied", "revoked" -> error("The approval request is ${result.optString("status")}.")
                         }
-                        addMessage("THOR", "No approval arrived before the three-minute request expired.")
-                    } catch (error: Exception) {
-                        addMessage("THOR", "Master approval failed: ${error.message}")
+                        delay(3000L)
                     }
+                    addMessage("THOR", "No approval arrived before the three-minute request expired.")
+                } catch (error: Exception) {
+                    addMessage("THOR", "Master approval failed: ${error.message}")
                 }
             }
-            .addOnFailureListener { error ->
-                addMessage("THOR", "Firebase sign-in failed: ${error.localizedMessage}")
-            }
+        }
     }
 
     private fun showActiveMasterSessions() {
