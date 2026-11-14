@@ -728,7 +728,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             2 -> "Bengali"
             else -> "English"
         }
-        val session = ThorLiveSession(this, object : ThorLiveSession.Listener {
+        lateinit var session: ThorLiveSession\n        session = ThorLiveSession(this, object : ThorLiveSession.Listener {
             override fun onState(state: ThorLiveSession.State, detail: String) {
                 liveOrb?.setLiveState(state)
                 liveStatusText?.text = detail
