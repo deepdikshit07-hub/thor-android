@@ -1050,9 +1050,27 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     openAppAndControlMedia(match.groupValues[1].trim(), match.groupValues[2].lowercase(Locale.ROOT))
                 } != null -> Unit
 
-            lower.contains("youtube") && lower.contains("download") &&
-                (lower.contains("5th") || lower.contains("fifth")) && lower.contains("play") ->
-                startYoutubeFifthDownloadNavigation()
+            lower.contains("youtube") && lower.contains("download") && lower.contains("play") -> {
+                val itemNumber = extractOrdinal(lower)
+                if (itemNumber == null) {
+                    val message = "Which downloaded video should I play? For example, say: play the sixth video in YouTube Downloads."
+                    addMessage("THOR", message)
+                    speak(message)
+                } else {
+                    startNavigationTask(
+                        "com.google.android.youtube",
+                        "YOUTUBE_DOWNLOAD_INDEX",
+                        "WAIT_DOWNLOADS",
+                        itemNumber
+                    )
+                }
+            }
+
+            lower.contains("youtube") && lower.contains("download") ->
+                startNavigationTask("com.google.android.youtube", "YOUTUBE_DOWNLOADS", "WAIT_DOWNLOADS", 0)
+
+            lower.contains("instagram") && (lower.contains("reel") || lower.contains("short video")) ->
+                startNavigationTask("com.instagram.android", "INSTAGRAM_REELS", "WAIT_REELS", 0)
 
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
@@ -1300,7 +1318,24 @@ lower.startsWith("অ্যালার্ম ") -> {
                     override fun onEndOfSpeech() {}
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                     override fun onPartialResults(partialResults: Bundle?) {}
-                    override fun onError(error: Int) { scheduleWakeListening(900L) }
+                    override fun onError(error: Int) {
+                        android.util.Log.w("THOR_WAKE", "Speech recognition error=$error")
+                        val retryDelay = when (error) {
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 450L
+                            SpeechRecognizer.ERROR_NO_MATCH -> 550L
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1_600L
+                            SpeechRecognizer.ERROR_NETWORK,
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> 2_000L
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                                addMessage("THOR", "Microphone permission is required for wake listening.")
+                                stopWakeWord()
+                                wakeButton?.text = "WAKE: OFF"
+                                return
+                            }
+                            else -> 1_100L
+                        }
+                        scheduleWakeListening(retryDelay)
+                    }
                     override fun onResults(results: Bundle?) {
                         val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull()?.trim().orEmpty()
@@ -1505,7 +1540,24 @@ lower.startsWith("অ্যালার্ম ") -> {
         return reply
     }
 
-    private fun startYoutubeFifthDownloadNavigation() {
+    private fun extractOrdinal(command: String): Int? {
+        val words = mapOf(
+            "first" to 1, "second" to 2, "third" to 3, "fourth" to 4,
+            "fifth" to 5, "sixth" to 6, "seventh" to 7, "eighth" to 8,
+            "ninth" to 9, "tenth" to 10
+        )
+        words.entries.firstOrNull { Regex("\\b${it.key}\\b").containsMatchIn(command) }?.let { return it.value }
+        val numeric = Regex("\\b(\\d{1,2})(?:st|nd|rd|th)?\\b").find(command)
+            ?.groupValues?.getOrNull(1)?.toIntOrNull()
+        return numeric?.takeIf { it in 1..20 }
+    }
+
+    private fun startNavigationTask(
+        appPackage: String,
+        task: String,
+        stage: String,
+        itemNumber: Int
+    ) {
         val serviceName = android.content.ComponentName(this, ThorNavigationService::class.java).flattenToString()
         val enabledServices = Settings.Secure.getString(
             contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -1513,37 +1565,43 @@ lower.startsWith("অ্যালার্ম ") -> {
         val serviceEnabled = enabledServices.split(':').any { it.equals(serviceName, ignoreCase = true) }
 
         if (!serviceEnabled) {
-            val message = "Screen Navigation needs your permission first. Enable THOR Navigation in Android Accessibility settings, then repeat the command."
+            val message = "Screen Navigation needs your permission. Enable THOR Navigation in Android Accessibility settings, then repeat your command."
             addMessage("THOR", message)
             speak(message)
-            try {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (_: Exception) {
-                addMessage("THOR", "Open Settings > Accessibility > THOR Navigation manually.")
-            }
+            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            catch (_: Exception) { addMessage("THOR", "Open Settings > Accessibility > THOR Navigation manually.") }
             return
         }
 
-        val launch = packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+        val launch = packageManager.getLaunchIntentForPackage(appPackage)
         if (launch == null) {
-            val message = "YouTube is not installed or cannot be opened on this phone."
+            val appName = if (appPackage == "com.instagram.android") "Instagram" else "YouTube"
+            val message = "$appName is not installed or cannot be opened on this phone."
             addMessage("THOR", message)
             speak(message)
             return
         }
 
         getSharedPreferences("thor_navigation", MODE_PRIVATE).edit()
-            .putString("task", "YOUTUBE_FIFTH_DOWNLOAD")
-            .putString("stage", "WAIT_DOWNLOADS")
+            .putString("task", task)
+            .putString("stage", stage)
+            .putInt("item_number", itemNumber)
             .putString("seen_items", "")
             .apply()
-        addMessage("THOR", "Opening YouTube. I'll look for Downloads and select the fifth listed video. You can stop the task by turning off THOR Navigation in Accessibility settings.")
-        speak("Opening YouTube. Navigating to Downloads.")
+
+        val description = when (task) {
+            "YOUTUBE_DOWNLOAD_INDEX" -> "Opening YouTube Downloads and looking for video number $itemNumber."
+            "YOUTUBE_DOWNLOADS" -> "Opening YouTube and navigating to Downloads."
+            "INSTAGRAM_REELS" -> "Opening Instagram and navigating to Reels."
+            else -> "Opening the requested app."
+        }
+        addMessage("THOR", "$description Screen navigation is best-effort and depends on the app's current layout.")
+        speak(description)
         try {
             startActivity(launch)
         } catch (error: Exception) {
             getSharedPreferences("thor_navigation", MODE_PRIVATE).edit().clear().apply()
-            addMessage("THOR", "I couldn't open YouTube: ${error.message ?: "launch failed"}")
+            addMessage("THOR", "I couldn't open the app: ${error.message ?: "launch failed"}")
         }
     }
 
@@ -1812,11 +1870,20 @@ private fun launchIntent(
         chat.append("$who  ›  $message\n\n")
     }
 
+    private var pendingSpeech: String? = null
+
     private fun speak(message: String) {
-        if (ttsReady) {
-            setTtsLanguage()
-            applyVoiceStyle()
-            tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "thor-${System.currentTimeMillis()}")
+        val engine = tts
+        if (engine == null || !ttsReady) {
+            pendingSpeech = message
+            return
+        }
+        setTtsLanguage()
+        applyVoiceStyle()
+        val result = engine.speak(message, TextToSpeech.QUEUE_FLUSH, null, "thor-${System.currentTimeMillis()}")
+        if (result == TextToSpeech.ERROR) {
+            android.util.Log.e("THOR_TTS", "TTS engine rejected speech")
+            Toast.makeText(this, "THOR voice failed. Check the installed text-to-speech engine and media volume.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1843,8 +1910,23 @@ private fun launchIntent(
     override fun onInit(status: Int) {
         ttsReady = status == TextToSpeech.SUCCESS
         if (ttsReady) {
+            tts?.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
             setTtsLanguage()
             applyVoiceStyle()
+            pendingSpeech?.let { queued ->
+                pendingSpeech = null
+                speak(queued)
+            }
+        } else {
+            android.util.Log.e("THOR_TTS", "TextToSpeech initialization failed: $status")
+            runOnUiThread {
+                Toast.makeText(this, "THOR voice engine could not start. Check Android Text-to-speech settings.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
