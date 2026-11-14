@@ -326,7 +326,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             gravity = Gravity.CENTER
             setTextColor(Color.rgb(205, 220, 235))
             setPadding(dp(10), dp(13), dp(10), dp(13))
-            background = premiumBackground(Color.rgb(18, 27, 39), Color.rgb(102, 145, 174))
+            setBackground(premiumBackground(Color.rgb(18, 27, 39), Color.rgb(102, 145, 174)))
         }
         liveStatusText = statusPanel
         homeBody.addView(statusPanel, matchWrap())
