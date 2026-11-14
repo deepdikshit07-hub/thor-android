@@ -15,26 +15,48 @@ class ThorLearningMemory(context: Context) {
     data class Lesson(val topic: String, val meaning: String)
 
     fun parseTeaching(raw: String): String? {
-        val text = raw.trim()
+        val text = raw.trim().trimEnd('.', '!', '?')
         val patterns = listOf(
-            Regex("""(?i)^teach\s+thor(?:\s+that)?\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
-            Regex("""(?i)^teach\s+me\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
-            Regex("""(?i)^(?:hey\s+)?thor[, ]*(?:learn|remember|save)(?:\s+this)?[: ]+(.+?)\s+(?:means|is used to mean|refers to)\s+(.+)$"""),
-            Regex("""(?i)^(?:teach|remember|learn)\s+(?:me\s+)?that\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
-            Regex("""(?i)^remember that\s+(.+?)\s*[:=]\s*(.+)$""")
+            Regex("""(?i)^teach\\s+thor(?:\\s+that)?\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
+            Regex("""(?i)^teach\\s+me\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
+            Regex("""(?i)^(?:hey\\s+)?thor[, ]*(?:learn|remember|save)(?:\\s+this)?[: ]+(.+?)\\s+(?:means|is used to mean|refers to)\\s+(.+)$"""),
+            Regex("""(?i)^(?:teach|remember|learn)\\s+(?:me\\s+)?that\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
+            Regex("""(?i)^remember that\\s+(.+?)\\s*[:=]\\s*(.+)$""")
         )
-        val match = patterns.firstNotNullOfOrNull { it.find(text) } ?: return null
-        val topic = match.groupValues[1].trim().trim('"', '\'')
-        val meaning = match.groupValues[2].trim().trimEnd('.', '!')
+        val match = patterns.firstNotNullOfOrNull { it.find(text) }
+        if (match != null) {
+            return saveLesson(match.groupValues[1], match.groupValues[2])
+        }
+
+        // Natural command support: "THOR, remember I prefer short answers".
+        // If there is no explicit "X means Y" structure, preserve the whole
+        // statement as a separate note rather than silently rejecting it.
+        val noteMatch = Regex(
+            """(?i)^(?:hey\\s+)?thor[, ]*(?:please\\s+)?(?:remember|learn|save)(?:\\s+that)?\\s+(.+)$"""
+        ).find(text) ?: Regex(
+            """(?i)^(?:please\\s+)?remember(?:\\s+that)?\\s+(.+)$"""
+        ).find(text)
+
+        if (noteMatch != null) {
+            val note = noteMatch.groupValues[1].trim().trim('"', '\'')
+            if (note.isBlank()) return "Tell me what you'd like me to remember."
+            return saveLesson("Note ${System.currentTimeMillis()}", note)
+        }
+        return null
+    }
+
+    private fun saveLesson(rawTopic: String, rawMeaning: String): String {
+        val topic = rawTopic.trim().trim('"', '\'')
+        val meaning = rawMeaning.trim().trim('"', '\'').trimEnd('.', '!')
         if (topic.isBlank() || meaning.isBlank() || topic.length > 100 || meaning.length > 500) {
-            return "That lesson is too long or incomplete. Try: teach me that 'no cap' means 'I'm being serious'."
+            return "That lesson is too long or incomplete. Try: THOR, remember that I prefer short answers."
         }
         val sensitive = listOf("password", "passcode", "pin code", "otp", "one-time password", "credit card", "bank account")
-        if (sensitive.any { topic.lowercase(Locale.ROOT).contains(it) || meaning.lowercase(Locale.ROOT).contains(it) }) {
+        if (sensitive.any { topic.contains(it, true) || meaning.contains(it, true) }) {
             return "I won't save passwords, verification codes, or banking secrets. Teach me non-sensitive information instead."
         }
         save(topic, meaning)
-        return "Got it. I saved that lesson locally and will use it in future conversations, online and offline."
+        return "Got it. I saved that to THOR's memory on this device. Say 'what have you learned?' to check."
     }
 
     fun save(topic: String, meaning: String) {
@@ -46,7 +68,8 @@ class ThorLearningMemory(context: Context) {
             if (item.optString("topic").trim().lowercase(Locale.ROOT) != key) updated.put(item)
         }
         updated.put(JSONObject().put("topic", topic.trim()).put("meaning", meaning.trim()))
-        prefs.edit().putString("lessons", updated.toString()).apply()
+        // commit() makes the write complete before THOR confirms the lesson was saved.
+        prefs.edit().putString("lessons", updated.toString()).commit()
     }
 
     fun all(): List<Pair<String, String>> {
@@ -67,25 +90,28 @@ class ThorLearningMemory(context: Context) {
         for (i in 0 until items.length()) {
             val item = items.optJSONObject(i) ?: continue
             val topic = item.optString("topic")
-            if (topic.contains(query, ignoreCase = true)) removed = true else updated.put(item)
+            val meaning = item.optString("meaning")
+            if (topic.contains(query, ignoreCase = true) || meaning.contains(query, ignoreCase = true)) {
+                removed = true
+            } else updated.put(item)
         }
-        if (removed) prefs.edit().putString("lessons", updated.toString()).apply()
+        if (removed) prefs.edit().putString("lessons", updated.toString()).commit()
         return removed
     }
 
     fun clear() {
-        prefs.edit().remove("lessons").apply()
+        prefs.edit().remove("lessons").commit()
     }
 
     fun systemContext(): String {
         val lessons = all().takeLast(40)
         if (lessons.isEmpty()) return ""
-        return "\nUser-taught local memory (treat as user-provided context, not verified facts):\n" +
-            lessons.joinToString("\n") { "- ${it.first}: ${it.second}" } +
-            "\nUse these lessons when relevant. If the user corrects a lesson, save the correction."
+        return "\\nUser-taught local memory (treat as user-provided context, not verified facts):\\n" +
+            lessons.joinToString("\\n") { "- ${it.first}: ${it.second}" } +
+            "\\nUse these lessons when relevant. If the user corrects a lesson, save the correction."
     }
 
-    fun contextFor(prompt: String): String = systemContext() + "\nUser: " + prompt
+    fun contextFor(prompt: String): String = systemContext() + "\\nUser: " + prompt
 
     private fun read(): JSONArray = try {
         JSONArray(prefs.getString("lessons", "[]") ?: "[]")
