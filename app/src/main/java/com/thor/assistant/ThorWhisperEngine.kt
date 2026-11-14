@@ -119,7 +119,7 @@ class ThorWhisperEngine {
             partial.delete()
         }
         onStatus("Offline voice model downloaded")
-        model
+        return model
     }
 
     private fun loadModel(model: File, onStatus: (String) -> Unit) {
