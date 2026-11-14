@@ -587,7 +587,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(5), dp(5), dp(5), dp(5))
-            background = premiumBackground(Color.rgb(19, 23, 31), Color.rgb(48, 56, 69))
+            setBackground(premiumBackground(Color.rgb(19, 23, 31), Color.rgb(48, 56, 69)))
         }
         val navLabels = listOf("Home", "Chat", "Live", "Tools", "Shield", "Settings")
         val navButtons = mutableListOf<Button>()
