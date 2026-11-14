@@ -6,7 +6,7 @@ being validated.
 
 ## Current project features
 
-- Dark, blue-accented assistant interface with five bottom-navigation sections.
+- Dark, blue-accented assistant interface with six bottom-navigation sections.
 - Dedicated THOR LIVE bottom-navigation section with animated energy core, bidirectional Gemini Live audio, voice interruption support, and session-only captions (no local chat transcript storage).
 - Animated holographic reactor HUD and startup animation.
 - Custom THOR launcher artwork.
