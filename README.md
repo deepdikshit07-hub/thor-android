@@ -67,16 +67,3 @@ The Android Firebase configuration file identifies project `thor-ai-2791b` (proj
 `418315674236`). Keep the Worker `FIREBASE_PROJECT_ID`, Firebase Web API key, and service-account
 project consistent with that project. Never commit service-account JSON, private keys, passwords,
 or App Check debug tokens.
-
-
-## Independent offline speech recognition
-
-The normal THOR microphone path uses direct Android `AudioRecord` capture and the open-source `whisper.cpp` engine. It does not invoke Android `SpeechRecognizer`, `RecognizerIntent`, Google Speech Services, or a cloud speech-to-text endpoint.
-
-- English, Hindi, and Bengali transcription is performed locally.
-- The first microphone use asks permission to download the multilingual Whisper tiny Q5_1 model (about 32.2 MB). It is stored in the app's private files directory and SHA-256 checked before use.
-- Later transcription runs offline and does not upload microphone recordings.
-- The Android build compiles whisper.cpp through CMake/NDK for arm64-v8a, armeabi-v7a, and x86_64.
-- The optional always-on wake listener is temporarily disabled; it will return only with a dedicated local low-power keyword model.
-
-The compact tiny model is selected to keep memory and download size practical on lower-end phones. It is not guaranteed to be perfectly accurate in noisy environments or for every accent. Accuracy and speed must be measured on real devices; larger Whisper models can be offered as optional downloads for devices with enough memory.
