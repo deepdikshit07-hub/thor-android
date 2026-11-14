@@ -44,8 +44,8 @@ class ThorAiProviderManager(private val context: Context) {
     private val prefs = context.getSharedPreferences("thor_ai_provider", Context.MODE_PRIVATE)
     private val alias = "thor_ai_provider_aes_key"
 
-    fun settings(): Settings {
-        val provider = runCatching {
+    fun settings(forProvider: Provider? = null): Settings {
+        val provider = forProvider ?: runCatching {
             Provider.valueOf(prefs.getString("provider", Provider.GEMINI.name) ?: Provider.GEMINI.name)
         }.getOrDefault(Provider.GEMINI)
         val suffix = provider.name
