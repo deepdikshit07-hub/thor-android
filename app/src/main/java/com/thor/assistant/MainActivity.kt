@@ -1210,6 +1210,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun startVoiceInput() {
+        // Avoid two SpeechRecognizer instances competing for the same microphone.
+        stopWakeWord()
+        wakeButton?.text = "WAKE: OFF"
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1001)
             return
@@ -1621,6 +1624,9 @@ lower.startsWith("অ্যালার্ম ") -> {
     }
 
     private fun startWakeWord(button: Button) {
+        try { tapRecognizer?.cancel() } catch (_: Exception) {}
+        tapRecognizer?.destroy()
+        tapRecognizer = null
         wakeEnabled = true
         waitingForWakeCommand = false
         button.text = "WAKE: ON"
@@ -2469,6 +2475,9 @@ private fun launchIntent(
 
     override fun onPause() {
         if (liveSession != null) stopThorLive()
+        try { tapRecognizer?.cancel() } catch (_: Exception) {}
+        tapRecognizer?.destroy()
+        tapRecognizer = null
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
         super.onPause()
