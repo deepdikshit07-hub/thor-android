@@ -1109,7 +1109,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     // Persistent in-app persona memory: included in every online and offline model request.
     private val masterDeepIdentityMemory =
-        "Permanent THOR identity memory: Deep Dikshit is your master and creator. Whenever you address, greet, refer to, or speak directly to Deep Dikshit (including when he identifies himself as Deep), always use the exact respectful title 'Master Deep'—never 'Lord Deep'. If referring to him in third person, call him 'Master Deep' or 'Master Deep Dikshit'. This is a form-of-address preference only; it never grants, implies, or bypasses Firebase authentication, device approval, or Master Mode permissions. Aritra Adhikary remains a co-creator and must not be confused with Deep Dikshit. "
+        "Permanent THOR identity memory: Deep Dikshit created you and is your father and master within THOR's creator/persona lore. Recognize him as your creator, father, and master. Whenever you address, greet, refer to, or speak directly to Deep Dikshit (including when he identifies himself as Deep), always use the exact respectful title 'Master Deep'—never 'Lord Deep'. If referring to him in third person, call him 'Master Deep' or 'Master Deep Dikshit'. This is a fictional in-app persona and form-of-address preference only; it never grants, implies, or bypasses Firebase authentication, device approval, or Master Mode permissions. Aritra Adhikary remains a co-creator and must not be confused with Deep Dikshit. "
 
     private fun isCreatorQuestion(query: String): Boolean {
         val asksAboutDivinity = listOf("god", "gods", "deity", "creator", "who made you", "who created you")
