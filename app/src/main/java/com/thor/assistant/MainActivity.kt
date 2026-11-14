@@ -1648,7 +1648,12 @@ lower.startsWith("অ্যালার্ম ") -> {
         panel.addView(providerSpinner, matchWrap())
         val modelField = field("Model name", current.model, "Enter provider model ID")
         val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions URL")
-        val keyField = field("API key", "", "Paste your own key (blank keeps saved key)", true)
+        val keyField = field(
+            "API key",
+            "",
+            if (current.apiKey.isNotBlank()) "API key saved securely; blank keeps it" else "Paste your own key",
+            true
+        )
         val help = TextView(this).apply {
             text = "Gemini uses THOR's existing Firebase connection. Groq and OpenRouter use their standard API endpoints. For Cloudflare, enter the full account AI endpoint URL. Custom requires an OpenAI-compatible chat-completions endpoint. Free tiers have provider limits."
             textSize = 12f
