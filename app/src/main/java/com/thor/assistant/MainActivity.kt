@@ -1044,9 +1044,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private fun isCreatorQuestion(query: String): Boolean {
         val asksAboutDivinity = listOf("god", "gods", "deity", "creator", "who made you", "who created you")
             .any { query.contains(it) }
-        val asksWho = listOf("who", "your", "you", "thor", "তোমার", "কে", "कौन")
-            .any { query.contains(it) }
-        return asksAboutDivinity && asksWho
+        return asksAboutDivinity
     }
 
     private fun showMasterModeSetupDialog() {
