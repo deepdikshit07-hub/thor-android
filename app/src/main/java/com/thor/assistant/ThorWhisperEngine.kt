@@ -28,6 +28,8 @@ class ThorWhisperEngine {
     private val native = ThorWhisperNative()
     private var nativeContext: Long = 0L
     private var loadedModelPath: String? = null
+    @Volatile private var cancelRequested = false
+    @Volatile private var activeRecorder: AudioRecord? = null
 
     suspend fun transcribe(filesDir: File, language: String, onStatus: (String) -> Unit): String =
         withContext(Dispatchers.IO) {
@@ -35,6 +37,7 @@ class ThorWhisperEngine {
             val model = ensureModel(filesDir, onStatus)
             loadModel(model, onStatus)
             onStatus("Listening… speak now")
+            cancelRequested = false
             val audio = recordSpeech()
             onStatus("Transcribing on this device…")
             val result = native.nativeTranscribe(nativeContext, audio, language).trim()
@@ -141,6 +144,7 @@ class ThorWhisperEngine {
             } catch (_: Exception) { }
         }
         val input = recorder ?: throw IllegalStateException("This device couldn't open its microphone. Check THOR's microphone permission and the system privacy switch.")
+        activeRecorder = input
         val bytes = ByteArrayOutputStream()
         val frame = ShortArray(1024)
         var speechStarted = false
@@ -149,7 +153,7 @@ class ThorWhisperEngine {
         var lastSpeechAt = startedAt
         try {
             input.startRecording()
-            while (SystemClock.elapsedRealtime() - startedAt < 25_000L) {
+            while (!cancelRequested && SystemClock.elapsedRealtime() - startedAt < 25_000L) {
                 val count = input.read(frame, 0, frame.size)
                 if (count < 0) throw IllegalStateException("Microphone capture stopped (AudioRecord ${count}).")
                 if (count == 0) continue
@@ -178,7 +182,9 @@ class ThorWhisperEngine {
         } finally {
             try { input.stop() } catch (_: Exception) { }
             input.release()
+            activeRecorder = null
         }
+        if (cancelRequested) throw IllegalStateException("Voice input stopped because THOR left the screen.")
         val pcm = bytes.toByteArray()
         if (pcm.size < actualRate / 4) throw IllegalStateException("The recording was too short. Please speak a little longer.")
         val source = FloatArray(pcm.size / 2) { index ->
@@ -197,7 +203,13 @@ class ThorWhisperEngine {
         }
     }
 
+    fun cancelCapture() {
+        cancelRequested = true
+        try { activeRecorder?.stop() } catch (_: Exception) { }
+    }
+
     fun release() {
+        cancelCapture()
         if (nativeContext != 0L) {
             native.nativeDestroy(nativeContext)
             nativeContext = 0L
