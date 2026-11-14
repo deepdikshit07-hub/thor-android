@@ -847,6 +847,26 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(muted)
         }
         panel.addView(subtitle, matchWrap())
+        val creatorEmblem = TextView(this).apply {
+            text = "DEVELOPED AND ENGINEERED BY\nARITRA ADHIKARY AND DEEP DIKSHIT"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(Color.rgb(190, 220, 245))
+            setPadding(18, 11, 18, 11)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(10, 24, 42))
+                setCornerRadius(12f * resources.displayMetrics.density)
+                setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), blue)
+            }
+        }
+        panel.addView(creatorEmblem, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER
+            topMargin = (18 * resources.displayMetrics.density).toInt()
+        })
         val status = TextView(this).apply {
             text = "POWERING UP  •  PLEASE WAIT"
             textSize = 10f
