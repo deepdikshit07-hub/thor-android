@@ -5,7 +5,7 @@ compatibility_date = "2026-11-13"
 [[d1_databases]]
 binding = "DB"
 database_name = "thor-master-approval"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "81128c52-d287-40b2-86a7-7a07991f6fe3"
 
 [vars]
 FIREBASE_PROJECT_ID = "thor-ai-2791b"
