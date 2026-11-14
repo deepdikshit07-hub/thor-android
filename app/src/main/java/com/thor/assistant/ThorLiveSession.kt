@@ -144,14 +144,15 @@ class ThorLiveSession(
             if (stopped.get()) return
             startAudio()
             notifyState(State.LISTENING, "LISTENING")
+        } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
+            val detail = "Gemini did not confirm the Live session setup within 15 seconds. Check that the phone has a stable internet connection and that this Gemini API key has Live API access. The app will not keep waiting."
+            android.util.Log.e("THOR_LIVE", "Live session startup timed out: $detail", error)
+            fail(detail)
+            throw IllegalStateException(detail, error)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            val detail = if (error is kotlinx.coroutines.TimeoutCancellationException) {
-                "Gemini did not confirm the Live session setup within 15 seconds. Check that the phone has a stable internet connection and that this Gemini API key has Live API access. The app will not keep waiting."
-            } else {
-                error.message ?: "Could not start Live Mode."
-            }
+            val detail = error.message ?: "Could not start Live Mode."
             android.util.Log.e("THOR_LIVE", "Live session startup failed: $detail", error)
             fail(detail)
             throw IllegalStateException(detail, error)
