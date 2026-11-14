@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - 'experiment/**'
+      - 'feature/**'
     paths:
       - 'cloudflare/master-mode/**'
       - '.github/workflows/worker-check.yml'
