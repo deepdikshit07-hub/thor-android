@@ -1,5 +1,6 @@
 package com.thor.assistant
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.StatFs
 import com.google.ai.edge.litertlm.Backend
@@ -133,13 +134,25 @@ class ThorOfflineAi(private val context: Context) {
             }
             if (!isModelInstalled()) error("Offline model is not installed or bundled.")
 
-            val candidate = Engine(
-                EngineConfig(
-                    modelPath = modelFile.absolutePath,
-                    backend = Backend.CPU(),
-                    cacheDir = context.cacheDir.absolutePath
+            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            val memoryInfo = ActivityManager.MemoryInfo()
+            activityManager.getMemoryInfo(memoryInfo)
+            val minimumRuntimeMemory = 512L * 1024L * 1024L
+            if (memoryInfo.lowMemory || memoryInfo.availMem < minimumRuntimeMemory) {
+                error("Your phone is low on available memory for Offline AI. Close some apps and try again.")
+            }
+
+            val candidate = try {
+                Engine(
+                    EngineConfig(
+                        modelPath = modelFile.absolutePath,
+                        backend = Backend.CPU(),
+                        cacheDir = context.cacheDir.absolutePath
+                    )
                 )
-            )
+            } catch (error: OutOfMemoryError) {
+                throw IllegalStateException("There is not enough free memory to start Offline AI. Close other apps and retry.", error)
+            }
             try {
                 candidate.initialize()
                 val localConversation = candidate.createConversation(
@@ -162,6 +175,9 @@ class ThorOfflineAi(private val context: Context) {
                 )
                 engine = candidate
                 conversation = localConversation
+            } catch (error: OutOfMemoryError) {
+                try { candidate.close() } catch (_: Exception) {}
+                throw IllegalStateException("Offline AI ran out of memory while loading. Close other apps and try again.", error)
             } catch (error: Exception) {
                 try { candidate.close() } catch (_: Exception) {}
                 throw error

@@ -1,8 +1,7 @@
 # THOR Android Assistant
 
 THOR is an experimental Android personal assistant project. The active development branch is
-`experiment/boss-speaker-verification`; keep it separate from the main branch while features are
-being validated.
+`feature/thor-live-mode`; its draft pull request targets `experiment/boss-speaker-verification`. Keep it separate from the main branch while features are being validated.
 
 ## Current project features
 
@@ -10,7 +9,7 @@ being validated.
 - Dedicated THOR LIVE bottom-navigation section with animated energy core, bidirectional Gemini Live audio, voice interruption support, and session-only captions (no local chat transcript storage).
 - Animated holographic reactor HUD and startup animation.
 - Custom THOR launcher artwork.
-- Text commands, Android speech-recognition handoff, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
+- Text commands, Android speech-recognition handoff, foreground-service Background Wake with an ongoing microphone notification, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
 - English, Hindi, and Bengali response selection.
 - Local notes, tasks, user-taught lessons, and reminders.
 - App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
@@ -22,7 +21,7 @@ being validated.
 
 ## Build and download
 
-GitHub Actions builds a debug APK when commits are pushed to `experiment/**`.
+GitHub Actions builds a debug APK for the active pull request targeting `experiment/boss-speaker-verification` and for supported workflow branches.
 
 1. Open the repository's **Actions** tab.
 2. Select the latest successful **Build THOR APK** run for the experimental branch.
@@ -52,14 +51,14 @@ Credentials are encrypted at rest using an Android Keystore AES-GCM key. Android
 
 ## Important limitations
 
-- A successful CI build is not a physical-device test.
+- A successful CI build is not a physical-device test. The repository currently has no Android instrumentation test suite, so lint and the unit-test task do not prove real microphone, speaker, notification, or device compatibility.
 - Android's speech-recognition service may require internet; requesting offline recognition does not guarantee offline speech-to-text.
 - Hybrid TTS selects from voices installed in the Android speech engine; online voices are used only when the device reports validated internet, with local voices preferred offline. Voice quality and language coverage depend on the installed engine and voice data; it does not use or reproduce ChatGPT Live's proprietary voice.
 - Automatic Boss voice recognition is not active; the speaker embedding work is experimental and not authentication.
 - Remote Master Mode needs the Cloudflare Worker, D1 schema, Firebase secrets/accounts, FCM, and two-device testing.
-- The current app does not yet enforce Master Mode as a gate for additional protected commands.
+- Remote Master Mode session administration is enforced by the Cloudflare Worker using the configured master UID and registered approver device. It is not a general app lock: ordinary phone controls remain available to anyone who can unlock and use this installation.
 - Accessibility navigation requires the user to enable THOR Navigation manually in Android settings.
-- Android battery management and notification permissions can affect reminders and FCM delivery.
+- Background Wake requires microphone and notification permissions and uses an Android foreground service; battery management and speech-provider behavior can still affect availability. Reminder alarms and FCM delivery can also be delayed by Android power and notification settings.
 
 ## Security and configuration
 
