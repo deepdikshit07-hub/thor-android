@@ -15,6 +15,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 /**
  * Per-installation AI provider settings. API credentials are encrypted with an
@@ -168,31 +169,38 @@ class ThorAiProviderManager(private val context: Context) {
      * Give generation a realistic response window, then retry transient
      * overload/timeouts once on the stable 3.6 Flash fallback.
      */
-    private fun askGeminiApi(config: Settings, prompt: String, maxTokens: Int): String {
+    private suspend fun askGeminiApi(config: Settings, prompt: String, maxTokens: Int): String {
+        val primaryError: Exception
         try {
-            return requestGeminiApi(config, prompt, maxTokens, config.model)
-        } catch (primaryError: Exception) {
-            if (!isTransientGeminiFailure(primaryError) || config.model == "gemini-3.6-flash") {
-                throw primaryError
-            }
-            val fallbackModel = if (config.model == "gemini-3.8-flash") "gemini-3.6-flash" else null
-            if (fallbackModel == null) throw primaryError
-            Log.w("THOR_AI_PROVIDER", "${config.model} temporarily unavailable; retrying with $fallbackModel", primaryError)
+            return requestGeminiApi(config, prompt, maxTokens, config.model, 28_000)
+        } catch (error: Exception) {
+            primaryError = error
+        }
+        if (!isTransientGeminiFailure(primaryError)) throw primaryError
+
+        // Retry briefly, then use a lighter stable model if the primary is still unavailable.
+        delay(700L)
+        try {
+            return requestGeminiApi(config, prompt, maxTokens, config.model, 18_000)
+        } catch (retryError: Exception) {
+            if (!isTransientGeminiFailure(retryError)) throw retryError
+            Log.w("THOR_AI_PROVIDER", "Primary Gemini model is still unavailable; trying the lighter fallback.", retryError)
+            val fallbackModel = "gemini-3.5-flash-lite"
+            delay(500L)
             return try {
-                requestGeminiApi(config, prompt, maxTokens, fallbackModel)
+                requestGeminiApi(config, prompt, maxTokens, fallbackModel, 18_000)
             } catch (fallbackError: Exception) {
                 Log.e("THOR_AI_PROVIDER", "Gemini primary and fallback requests both failed", fallbackError)
                 throw IllegalStateException(
-                    "Gemini is temporarily unavailable. ${config.model} and $fallbackModel both failed. " +
-                        "Primary: ${primaryError.message ?: primaryError.javaClass.simpleName}. " +
-                        "Fallback: ${fallbackError.message ?: fallbackError.javaClass.simpleName}. " +
-                        "Check the connection and try again shortly.",
+                    "Gemini could not complete the request. Primary: " + (primaryError.message ?: primaryError.javaClass.simpleName) +
+                        ". Retry: " + (retryError.message ?: retryError.javaClass.simpleName) +
+                        ". Fallback: " + (fallbackError.message ?: fallbackError.javaClass.simpleName) +
+                        ". Check internet access, API key permissions, and Google AI Studio project status.",
                     fallbackError
                 )
             }
         }
     }
-
     private fun isTransientGeminiFailure(error: Throwable): Boolean {
         var current: Throwable? = error
         while (current != null) {
@@ -209,7 +217,8 @@ class ThorAiProviderManager(private val context: Context) {
         config: Settings,
         prompt: String,
         maxTokens: Int,
-        requestModel: String
+        requestModel: String,
+        readTimeoutMs: Int
     ): String {
         val endpoint = config.endpoint.trim()
             .replace("{model}", requestModel)
@@ -222,8 +231,8 @@ class ThorAiProviderManager(private val context: Context) {
             .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens.coerceIn(64, 512)))
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 15_000
-            readTimeout = 60_000
+            connectTimeout = 10_000
+            readTimeout = readTimeoutMs
             doOutput = true
             setRequestProperty("x-goog-api-key", config.apiKey)
             setRequestProperty("Content-Type", "application/json")
@@ -237,7 +246,7 @@ class ThorAiProviderManager(private val context: Context) {
             if (status !in 200..299) {
                 val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }
                     .getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
-                if (status in listOf(500, 502, 503, 504)) {
+                if (status in listOf(408, 500, 502, 503, 504)) {
                     throw GeminiTransientException("Gemini temporarily returned HTTP $status ($detail).")
                 }
                 if (status == 429) {
@@ -247,7 +256,7 @@ class ThorAiProviderManager(private val context: Context) {
                 }
                 throw IllegalStateException(when (status) {
                     400 -> "Gemini rejected the request ($detail). Check the model and request settings."
-                    401, 403 -> "Gemini rejected the API key or permissions ($detail)."
+                    401, 403 -> "Gemini rejected the API key or permissions ($detail). Check that the key is active and allowed for the Generative Language API. Older unrestricted standard keys may need migration to a Google AI Studio authorization key."
                     404 -> "Gemini model '$requestModel' is unavailable to this API project. ($detail)"
                     429 -> "Gemini API quota/rate limit reached. A one-hour cooldown is now active. ($detail)"
                     else -> "Gemini API request failed: $detail"
