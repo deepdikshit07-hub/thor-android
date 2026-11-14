@@ -127,6 +127,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val repeatingUiAnimators = mutableListOf<android.animation.Animator>()
     private var firebaseReady = false
+    private var firebaseInitError: String? = null
     private lateinit var masterApprovalClient: ThorMasterApprovalClient
     private var wakeRecognizer: SpeechRecognizer? = null
     private var tapRecognizer: SpeechRecognizer? = null
@@ -330,6 +331,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             letterSpacing = 0.22f
         }
         homeBody.addView(homeTitle, matchWrap())
+        // Persistent creator emblem: visible on the Home screen, not only during the splash animation.
+        homeBody.addView(creatorEmblemView(), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(8), dp(6), dp(8), dp(12)) })
         val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.72f, 1f).apply {
             duration = 1800L
             repeatCount = ValueAnimator.INFINITE
@@ -356,7 +361,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }, matchWrap())
         val homeMic = makeButton("TAP TO SPEAK")
         homeMic.setTextColor(Color.WHITE)
-        homeMic.setBackgroundColor(Color.rgb(0, 105, 180))
         homeMic.setOnClickListener { startVoiceInput() }
         homeBody.addView(homeMic, matchWrap())
         val homeWake = makeButton("WAKE WORD: OFF")
@@ -390,7 +394,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(Color.WHITE)
             setSingleLine(true)
             setPadding(14, 12, 14, 12)
-            setBackgroundColor(panel)
+            setBackground(premiumBackground(panel, Color.rgb(38, 76, 108)))
         }
         chatBody.addView(input, matchWrap())
         val chatActions = LinearLayout(this).apply {
@@ -482,6 +486,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val aiProviderButton = makeButton("AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title)
         aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
         settingsBody.addView(aiProviderButton, matchWrap())
+        val testGeminiButton = makeButton("CHECK GEMINI CONNECTION")
+        testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
+        settingsBody.addView(testGeminiButton, matchWrap())
         settingsBody.addView(TextView(this).apply {
             text = "Choose Gemini, OpenAI / ChatGPT, Groq, OpenRouter, Cloudflare, a compatible custom API, or on-device AI. API keys are encrypted on this phone."
             textSize = 12f
@@ -583,7 +590,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             }
             navButtons.forEachIndexed { buttonIndex, button ->
                 button.setTextColor(if (buttonIndex == index) blue else muted)
-                button.setBackgroundColor(if (buttonIndex == index) Color.rgb(15, 43, 68) else Color.TRANSPARENT)
+                button.setBackground(premiumBackground(
+                    if (buttonIndex == index) Color.rgb(15, 43, 68) else Color.TRANSPARENT,
+                    if (buttonIndex == index) Color.rgb(38, 112, 158) else Color.TRANSPARENT
+                ))
             }
         }
         navLabels.forEachIndexed { index, label ->
@@ -659,7 +669,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val toggle = makeButton("START LIVE SESSION").apply {
             textSize = 14f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(0, 105, 180))
             setOnClickListener {
                 if (liveSession == null) startThorLive() else stopThorLive()
             }
@@ -926,10 +935,44 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
     ).apply { setMargins(4, 4, 4, 4) }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun premiumBackground(fill: Int, stroke: Int = Color.rgb(38, 88, 124)): android.graphics.drawable.Drawable {
+        val shape = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = dp(16).toFloat()
+            setColor(fill)
+            if (stroke != Color.TRANSPARENT) setStroke(dp(1), stroke)
+        }
+        return android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(Color.argb(42, 120, 210, 255)),
+            shape,
+            null
+        )
+    }
+
+    private fun creatorEmblemView(): TextView = TextView(this).apply {
+        text = "DEVELOPED & ENGINEERED BY\\nARITRA ADHIKARY  •  DEEP DIKSHIT"
+        textSize = 10f
+        gravity = Gravity.CENTER
+        letterSpacing = 0.08f
+        setTextColor(Color.rgb(205, 228, 248))
+        setPadding(dp(16), dp(12), dp(16), dp(12))
+        background = premiumBackground(Color.rgb(11, 27, 45), Color.rgb(42, 139, 190))
+        elevation = dp(3).toFloat()
+    }
+
     private fun makeButton(label: String) = Button(this).apply {
         text = label
         textSize = 12f
         isAllCaps = false
+        setTextColor(Color.rgb(232, 245, 255))
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        letterSpacing = 0.025f
+        minHeight = dp(48)
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+        background = premiumBackground(Color.rgb(13, 34, 54), Color.rgb(36, 91, 128))
+        elevation = dp(2).toFloat()
     }
 
     private fun installOfflineAi() {
@@ -2051,9 +2094,11 @@ lower.startsWith("অ্যালার্ম ") -> {
             }
             Firebase.appCheck.installAppCheckProviderFactory(providerFactory)
             firebaseReady = true
+            firebaseInitError = null
         } catch (error: Exception) {
             firebaseReady = false
-            addMessage("THOR", "Firebase setup needs attention: ${error.message ?: "initialization failed"}")
+            firebaseInitError = error.localizedMessage ?: error.javaClass.simpleName
+            addMessage("THOR", "Firebase setup needs attention: ${firebaseInitError}")
         }
     }
 
@@ -2173,6 +2218,59 @@ lower.startsWith("অ্যালার্ম ") -> {
             .show()
     }
 
+    private fun explainGeminiFailure(error: Throwable): String {
+        val details = generateSequence(error) { it.cause }
+            .mapNotNull { it.localizedMessage?.takeIf(String::isNotBlank) }
+            .distinct()
+            .joinToString(" | ")
+            .take(900)
+        val lower = details.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("app check") || lower.contains("appcheck") ||
+                lower.contains("permission_denied") || lower.contains("403") ->
+                "Gemini was blocked by Firebase App Check. This debug APK needs its device debug token registered in Firebase Console → App Check → Apps → THOR → Manage debug tokens. Run THOR and check Android Logcat for 'DebugAppCheckProvider' to find the token; keep it private and never post it publicly. Details: $details"
+            lower.contains("quota") || lower.contains("resource exhausted") || lower.contains("429") ->
+                "Gemini quota/rate limit reached. THOR will use offline mode for now. Details: $details"
+            lower.contains("api key") || lower.contains("unauthenticated") || lower.contains("401") ->
+                "Gemini authentication was rejected. Check the Firebase project/app configuration and enabled Firebase AI Logic service. Details: $details"
+            else -> "Gemini request failed. Check internet, Firebase AI Logic, and App Check. THOR will use offline mode. Details: ${details.ifBlank { error.javaClass.simpleName }}"
+        }
+    }
+
+    private fun checkGeminiConnection(button: Button) {
+        if (!firebaseReady) {
+            addMessage("THOR", "Firebase is not initialized: ${firebaseInitError ?: "unknown setup error"}. Check the Firebase app configuration first.")
+            return
+        }
+        button.isEnabled = false
+        button.text = "CHECKING GEMINI..."
+        addMessage("THOR", "Checking Firebase App Check and sending a small Gemini test request...")
+        Firebase.appCheck.getAppCheckToken(false)
+            .addOnSuccessListener {
+                mainScope.launch {
+                    try {
+                        val reply = GeminiAssistant.ask("Reply with exactly: THOR connection verified.")
+                        addMessage("THOR", "Gemini connection verified. App Check token was obtained and the model replied: ${reply.take(100)}")
+                        Toast.makeText(this@MainActivity, "Gemini connection verified.", Toast.LENGTH_LONG).show()
+                    } catch (error: Exception) {
+                        android.util.Log.e("THOR_GEMINI", "Manual Gemini connection test failed", error)
+                        addMessage("THOR", explainGeminiFailure(error))
+                    } finally {
+                        if (!isFinishing && !isDestroyed) {
+                            button.isEnabled = true
+                            button.text = "CHECK GEMINI CONNECTION"
+                        }
+                    }
+                }
+            }
+            .addOnFailureListener { error ->
+                android.util.Log.e("THOR_APPCHECK", "App Check token request failed", error)
+                addMessage("THOR", "Firebase App Check could not issue a token: ${error.localizedMessage ?: error.javaClass.simpleName}. Check App Check provider setup for this build.")
+                button.isEnabled = true
+                button.text = "CHECK GEMINI CONNECTION"
+            }
+    }
+
     private fun askGemini(prompt: String) {
         val providerManager = ThorAiProviderManager(this)
         val selectedProvider = providerManager.settings().provider
@@ -2208,6 +2306,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             return
         }
         if (!firebaseReady) {
+            addMessage("THOR", "Firebase AI is not initialized: ${firebaseInitError ?: "unknown Firebase setup error"}. Check Firebase configuration and App Check, then use Settings → Check Gemini Connection.")
             askLocalOrFallback(prompt)
             return
         }
@@ -2264,7 +2363,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     ).apply()
                     addMessage("THOR", "Gemini's free quota is exhausted. I'll use offline AI and won't retry online for one hour.")
                 } else {
-                    addMessage("THOR", "Online AI unavailable. Switching to offline AI.")
+                    addMessage("THOR", explainGeminiFailure(error))
                 }
                 askLocalOrFallback(prompt)
             }
