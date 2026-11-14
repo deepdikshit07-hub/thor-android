@@ -190,7 +190,7 @@ class ThorAiProviderManager(private val context: Context) {
                     if (value.isNotBlank()) { if (isNotEmpty()) append('\n'); append(value) }
                 }
             }
-            answer.takeIf { it.isNotBlank() } ?: error("Gemini returned no text. Check the selected model and key permissions.")
+            return answer.takeIf { it.isNotBlank() } ?: error("Gemini returned no text. Check the selected model and key permissions.")
         } finally {
             connection.disconnect()
         }
