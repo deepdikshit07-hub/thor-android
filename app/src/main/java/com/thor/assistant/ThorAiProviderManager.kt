@@ -25,7 +25,7 @@ import kotlinx.coroutines.withContext
 class ThorAiProviderManager(private val context: Context) {
     enum class Provider(val title: String, val defaultModel: String, val defaultEndpoint: String) {
         GEMINI("Google Gemini (Firebase)", "gemini-3.8-flash", ""),
-        GEMINI_API("Google Gemini (own API key)", "gemini-2.5-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
+        GEMINI_API("Google Gemini (own API key)", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
         OPENAI("OpenAI / ChatGPT API", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions"),
         GROQ("Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions"),
         OPENROUTER("OpenRouter", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
@@ -49,9 +49,22 @@ class ThorAiProviderManager(private val context: Context) {
             Provider.valueOf(prefs.getString("provider", Provider.GEMINI.name) ?: Provider.GEMINI.name)
         }.getOrDefault(Provider.GEMINI)
         val suffix = provider.name
+        val savedModel = prefs.getString("model_$suffix", null)
+        // Gemini now limits 2.5 model access for newly created projects.
+        // Migrate the old THOR default automatically so existing installs do not
+        // keep calling a model that may be unavailable to a new API project.
+        val model = if (provider == Provider.GEMINI_API &&
+            (savedModel.isNullOrBlank() || savedModel == "gemini-2.5-flash")
+        ) {
+            provider.defaultModel.also {
+                prefs.edit().putString("model_$suffix", it).apply()
+            }
+        } else {
+            savedModel ?: provider.defaultModel
+        }
         return Settings(
             provider,
-            prefs.getString("model_$suffix", provider.defaultModel) ?: provider.defaultModel,
+            model,
             prefs.getString("endpoint_$suffix", provider.defaultEndpoint) ?: provider.defaultEndpoint,
             decrypt(prefs.getString("api_key_$suffix", null))
         )
@@ -181,6 +194,7 @@ class ThorAiProviderManager(private val context: Context) {
                 }
                 throw IllegalStateException(when (status) {
                     401, 403 -> "Gemini rejected the API key or permissions ($detail)."
+                    404 -> "Gemini model ' + config.model + ' is unavailable to this API project. Choose a currently supported model such as gemini-3.8-flash. ($detail)"
                     429 -> "Gemini API quota/rate limit reached. A one-hour cooldown is now active. ($detail)"
                     else -> "Gemini API request failed: $detail"
                 })
