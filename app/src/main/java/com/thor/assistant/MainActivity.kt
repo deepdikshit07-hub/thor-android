@@ -1454,7 +1454,9 @@ lower.startsWith("অ্যালার্ম ") -> {
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     startWakeWord(button)
                 } else {
-                    addMessage("THOR", "Microphone permission is required for wake listening.")
+                    getSharedPreferences("thor_wake", MODE_PRIVATE).edit()
+                        .putBoolean("background_enabled", false).apply()
+                    addMessage("THOR", "Microphone permission was denied. Background wake has been switched off.")
                 }
             }
             1003 -> {
