@@ -72,6 +72,11 @@ class ThorAiProviderManager(private val context: Context) {
 
     suspend fun ask(prompt: String, maxTokens: Int = 256): String = withContext(Dispatchers.IO) {
         val config = settings()
+        val blockedUntil = prefs.getLong("cooldown_until_${config.provider.name}", 0L)
+        if (System.currentTimeMillis() < blockedUntil) {
+            val minutes = ((blockedUntil - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
+            error("${config.provider.title} quota cooldown is active for about $minutes more minutes.")
+        }
         require(config.provider != Provider.LOCAL) { "Local AI is selected." }
         require(config.provider != Provider.GEMINI) { "Gemini requests must use Firebase AI Logic." }
         require(config.apiKey.isNotBlank()) { "Add an API key for ${config.provider.title} in AI Provider settings." }
@@ -111,9 +116,14 @@ class ThorAiProviderManager(private val context: Context) {
                         ?: JSONObject(response).optString("message")
                 }.getOrNull().orEmpty()
                 val safeDetail = detail.take(240).ifBlank { "HTTP $status" }
+                if (status == 429) {
+                    prefs.edit()
+                        .putLong("cooldown_until_${config.provider.name}", System.currentTimeMillis() + 60L * 60L * 1000L)
+                        .apply()
+                }
                 throw IllegalStateException(when (status) {
                     401, 403 -> "Provider rejected the API key or permission ($safeDetail)."
-                    429 -> "Provider rate limit or free quota reached. ($safeDetail)"
+                    429 -> "Provider rate limit or free quota reached. A one-hour cooldown is now active. ($safeDetail)"
                     else -> "Provider request failed: $safeDetail"
                 })
             }
