@@ -1455,7 +1455,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                     override fun onPartialResults(partialResults: Bundle?) {}
                     override fun onError(error: Int) {
-                        android.util.Log.w("THOR_WAKE", "Speech recognition error=$error")
+                        android.util.Log.e("THOR_WAKE", "Speech recognition error=$error: ${speechErrorMessage(error)}")
                         val retryDelay = when (error) {
                             SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 450L
                             SpeechRecognizer.ERROR_NO_MATCH -> 550L
@@ -1463,7 +1463,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                             SpeechRecognizer.ERROR_NETWORK,
                             SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> 2_000L
                             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                                addMessage("THOR", "Microphone permission is required for wake listening.")
+                                addMessage("THOR", speechErrorMessage(error))
                                 stopWakeWord()
                                 wakeButton?.text = "WAKE: OFF"
                                 return
@@ -1521,7 +1521,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTags.getOrElse(language.selectedItemPosition) { "en-IN" })
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra("android.speech.extra.PREFER_OFFLINE", true)
+                    // Let the installed recognition provider choose network or local processing.
                 }
                 wakeRecognizer?.startListening(intent)
             } catch (error: Exception) {
