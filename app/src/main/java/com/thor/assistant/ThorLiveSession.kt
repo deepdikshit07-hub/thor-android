@@ -76,17 +76,18 @@ class ThorLiveSession(
     private var playbackJob: Job? = null
     private var previousAudioMode: Int? = null
 
-    suspend fun start(workerUrl: String, voiceName: String, languageName: String) {
+    suspend fun start(apiKey: String, voiceName: String, languageName: String) {
+        require(apiKey.isNotBlank()) { "Add your Gemini API key in THOR Settings → AI Provider before starting Live Mode." }
         check(socket == null) { "Live session is already started." }
         stopped.set(false)
         notifyState(State.CONNECTING, "SECURING LIVE CONNECTION")
         try {
-            val token = ThorLiveTokenClient().create(workerUrl, voiceName)
-            // The user may leave Live Mode while the token request is in flight.
+            // Use the same Gemini API key already saved in AI Provider settings.
+            // Google documents API-key authentication for direct Live WebSocket clients.
             if (stopped.get()) return
             val ready = CompletableDeferred<Unit>()
             val request = Request.Builder()
-                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=" + java.net.URLEncoder.encode(token, "UTF-8"))
+                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + java.net.URLEncoder.encode(apiKey, "UTF-8"))
                 .build()
             socket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
