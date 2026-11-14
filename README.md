@@ -4,6 +4,9 @@ This is a lightweight first-stage Android app starter for the Oppo A16 / ARM64 A
 
 ## Included
 - Text command input
+- Private on-device notes (`note <text>`, `notes`)
+- Private on-device to-do list (`todo <text>`, `tasks`, `done <number>`)
+- Subtle animated THOR title
 - Speech input through the Android speech-recognition activity
 - Android Text-to-Speech
 - English, Hindi and Bengali language selection
@@ -12,6 +15,8 @@ This is a lightweight first-stage Android app starter for the Oppo A16 / ARM64 A
 - Open the dialer (does not place a call)
 - Open an SMS composer (does not send a message)
 - Open the alarm UI for a specified 24-hour time
+- Create a reminder by opening the Clock app with a label and time for user confirmation (`remind 07:30 Take my book`)
+- Open an installed music app (`play music`) or search YouTube for a requested track (`play <song name>`)
 - Web search using the browser
 
 ## Build without Android Studio
@@ -70,5 +75,5 @@ Never paste a password or access token into chat or commit it into the project.
 - Text-to-Speech voice availability depends on installed Android TTS voice data.
 - This starter does not read private files, messages, call logs, or notifications. It does not have unrestricted phone access.
 - Calling opens the dialer; SMS opens the compose screen. You review and confirm those actions yourself.
-- The first version has no cloud AI key and makes no AI API requests. Online AI will be a separate stage using a secure backend.
+- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
 - Do not place API keys, passwords, or tokens in source code or GitHub commits.

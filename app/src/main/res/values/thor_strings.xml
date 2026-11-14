@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="thor_accessibility_description">Allows THOR to navigate visible app screens only for voice commands you explicitly give, such as opening YouTube Downloads and selecting a listed video.</string>
+</resources>

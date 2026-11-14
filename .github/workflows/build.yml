@@ -6,6 +6,10 @@ on:
   push:
     branches:
       - main
+      - thor-2.0-upgrade
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -37,7 +41,15 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Build debug APK
+      - name: Download bundled offline AI model
+        run: |
+          mkdir -p app/src/main/assets
+          curl -fL --retry 3 --retry-delay 5 \
+            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm?download=true" \
+            -o app/src/main/assets/Qwen3-0.6B.litertlm
+          test "$(stat -c%s app/src/main/assets/Qwen3-0.6B.litertlm)" -gt 100000000
+
+      - name: Build debug APK with bundled offline AI
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Upload APK

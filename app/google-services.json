@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "418315674236",
+    "project_id": "thor-ai-2791b",
+    "storage_bucket": "thor-ai-2791b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:418315674236:android:86ed5fc12e536a4ebd5ff9",
+        "android_client_info": {
+          "package_name": "com.thor.assistant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBEXzTIE6zrnldi1XX6x0q_GWqBeyFBZq8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
