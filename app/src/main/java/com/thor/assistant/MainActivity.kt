@@ -583,11 +583,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val settingsPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
         val pages = listOf(homeScroll, chatBody, livePage, featuresPage, securityPage, settingsPage)
+        // Floating liquid-glass navigation dock. The translucent layered drawable
+        // keeps the effect lightweight on Android 8+ without requiring GPU backdrop blur.
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(5), dp(5), dp(5), dp(5))
-            setBackground(premiumBackground(Color.rgb(19, 23, 31), Color.rgb(48, 56, 69)))
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            background = premiumBackground(Color.rgb(18, 31, 46), Color.rgb(92, 166, 207))
+            elevation = dp(12).toFloat()
+            clipToPadding = false
         }
         val navLabels = listOf("Home", "Chat", "Live", "Tools", "Shield", "Settings")
         val navButtons = mutableListOf<Button>()
@@ -597,11 +601,14 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
             }
             navButtons.forEachIndexed { buttonIndex, button ->
-                button.setTextColor(if (buttonIndex == index) blue else muted)
+                val selected = buttonIndex == index
+                button.setTextColor(if (selected) Color.WHITE else muted)
                 button.setBackground(premiumBackground(
-                    if (buttonIndex == index) Color.rgb(15, 43, 68) else Color.TRANSPARENT,
-                    if (buttonIndex == index) Color.rgb(38, 112, 158) else Color.TRANSPARENT
+                    if (selected) Color.rgb(28, 91, 132) else Color.rgb(16, 29, 43),
+                    if (selected) Color.rgb(106, 205, 255) else Color.rgb(62, 102, 132)
                 ))
+                button.alpha = if (selected) 1f else 0.82f
+                button.elevation = if (selected) dp(5).toFloat() else 0f
             }
         }
         navLabels.forEachIndexed { index, label ->
@@ -614,11 +621,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             navButtons.add(button)
             nav.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
-        nav.background = premiumBackground(Color.rgb(19, 23, 31), Color.rgb(48, 56, 69))
-        nav.elevation = dp(2).toFloat()
         root.addView(nav, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
+        ).apply { setMargins(dp(2), dp(6), dp(2), dp(8)) })
         setContentView(root)
         showTab(0)
         showStartupAnimation(contentFrame, blue, muted, background)
@@ -941,14 +946,14 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
         val base = android.graphics.drawable.GradientDrawable(
             android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(withAlpha(fill, 218), withAlpha(fill, 184))
+            intArrayOf(withAlpha(fill, 166), withAlpha(fill, 132))
         ).apply {
             shape = android.graphics.drawable.GradientDrawable.RECTANGLE
             cornerRadius = radius
         }
         val highlight = android.graphics.drawable.GradientDrawable(
             android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(Color.argb(38, 235, 248, 255), Color.argb(8, 190, 225, 255), Color.argb(0, 190, 225, 255))
+            intArrayOf(Color.argb(58, 245, 252, 255), Color.argb(16, 190, 225, 255), Color.argb(0, 190, 225, 255))
         ).apply {
             shape = android.graphics.drawable.GradientDrawable.RECTANGLE
             cornerRadius = radius
@@ -987,8 +992,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         letterSpacing = 0.025f
         minHeight = dp(50)
         setPadding(dp(17), dp(11), dp(17), dp(11))
-        background = premiumBackground(Color.rgb(24, 29, 38), Color.rgb(58, 68, 84))
-        elevation = dp(1).toFloat()
+        // All interactive controls share the same frosted-glass surface and Android ripple.
+        background = premiumBackground(Color.rgb(23, 42, 58), Color.rgb(91, 151, 187))
+        elevation = dp(3).toFloat()
+        stateListAnimator = null
     }
 
     private fun installOfflineAi() {
