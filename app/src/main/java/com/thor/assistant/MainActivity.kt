@@ -329,49 +329,58 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         homeBody.addView(homeTitle, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(88)
         ))
-        // Persistent creator emblem: visible on the Home screen, not only during the splash animation.
-        homeBody.addView(creatorEmblemView(), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(dp(8), dp(6), dp(8), dp(12)) })
-        val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.72f, 1f).apply {
-            duration = 1800L
+        val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.88f, 1f).apply {
+            duration = 2200L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
         }
         repeatingUiAnimators += homeTitleAnimator
         homeTitleAnimator.start()
         homeBody.addView(TextView(this).apply {
-            text = "YOUR PERSONAL AI ASSISTANT"
-            textSize = 11f
+            text = "ARTIFICIAL INTELLIGENCE  •  YOUR PERSONAL AI ASSISTANT"
+            textSize = 9.5f
             gravity = Gravity.CENTER
             setTextColor(muted)
-            letterSpacing = 0.12f
+            letterSpacing = 0.10f
         }, matchWrap())
         homeBody.addView(ThorHudView(this), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, (220 * resources.displayMetrics.density).toInt()
-        ).apply { setMargins(0, 18, 0, 18) })
-        homeBody.addView(TextView(this).apply {
-            text = "READY WHEN YOU ARE"
-            textSize = 13f
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(214)
+        ).apply { setMargins(0, dp(8), 0, dp(8)) })
+
+        val statusPanel = TextView(this).apply {
+            text = "●  SYSTEM STATUS     READY                         ∞  INFINITY MODE"
+            textSize = 12f
             gravity = Gravity.CENTER
-            setTextColor(blue)
-            letterSpacing = 0.1f
-        }, matchWrap())
-        val homeMic = makeButton("TAP TO SPEAK")
-        homeMic.setTextColor(Color.WHITE)
-        homeMic.setOnClickListener { startVoiceInput() }
-        homeBody.addView(homeMic, matchWrap())
+            setTextColor(Color.rgb(205, 220, 235))
+            setPadding(dp(10), dp(13), dp(10), dp(13))
+            background = premiumBackground(Color.rgb(18, 27, 39), Color.rgb(102, 145, 174))
+        }
+        homeBody.addView(statusPanel, matchWrap())
+
+        val chatEntry = makeButton("CHAT WITH THOR   ›")
+        chatEntry.textSize = 16f
+        chatEntry.setOnClickListener {
+            showTab(1)
+        }
+        homeBody.addView(chatEntry, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)
+        ).apply { setMargins(0, dp(12), 0, dp(5)) })
+
+        val apiSelector = makeButton(
+            "AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title + "   •   CHANGE API"
+        )
+        apiSelector.textSize = 12f
+        apiSelector.setOnClickListener { showAiProviderSettings(apiSelector) }
+        homeBody.addView(apiSelector, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
+        ).apply { setMargins(dp(18), dp(2), dp(18), dp(8)) })
+
         val homeWake = makeButton("WAKE WORD: OFF")
         homeWake.setOnClickListener { toggleWakeWord(homeWake) }
         wakeButton = homeWake
         wakeButtons += homeWake
         homeBody.addView(homeWake, matchWrap())
         contentFrame.addView(homeScroll, android.widget.FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-
-        val livePage = buildLivePage()
-        contentFrame.addView(livePage, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
@@ -418,7 +427,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         contentFrame.addView(chatBody, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
-
         val featuresBody = page()
         featuresBody.addView(TextView(this).apply {
             text = "FEATURES"
@@ -445,9 +453,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         offlineAiButton = offlineButton
         offlineButton.setOnClickListener { installOfflineAi() }
         featuresBody.addView(offlineButton, matchWrap())
-        val masterSetupButton = makeButton("MASTER MODE SETUP")
-        masterSetupButton.setOnClickListener { showMasterModeSetupDialog() }
-        featuresBody.addView(masterSetupButton, matchWrap())
         val memoryButton = makeButton("PERSONAL MEMORY")
         memoryButton.setOnClickListener { showPersonalMemoryManager() }
         featuresBody.addView(memoryButton, matchWrap())
@@ -481,6 +486,12 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
         }, matchWrap())
+        val toolsShortcut = makeButton("TOOLS")
+        toolsShortcut.setOnClickListener { showTab(2) }
+        settingsBody.addView(toolsShortcut, matchWrap())
+        val moreShortcut = makeButton("MORE")
+        moreShortcut.setOnClickListener { showTab(3) }
+        settingsBody.addView(moreShortcut, matchWrap())
         val aiProviderButton = makeButton("AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title)
         aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
         settingsBody.addView(aiProviderButton, matchWrap())
@@ -578,45 +589,50 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         ))
         val settingsPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
-        val pages = listOf(homeScroll, chatBody, livePage, featuresPage, securityPage, settingsPage)
-        // Floating liquid-glass navigation dock. The translucent layered drawable
-        // keeps the effect lightweight on Android 8+ without requiring GPU backdrop blur.
+        val pages = listOf(homeScroll, chatBody, featuresPage, securityPage, settingsPage)
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(7), dp(7), dp(7), dp(7))
-            setBackground(premiumBackground(Color.rgb(18, 31, 46), Color.rgb(92, 166, 207)))
+            setPadding(dp(7), dp(6), dp(7), dp(6))
+            setBackground(premiumBackground(Color.rgb(17, 24, 34), Color.rgb(112, 145, 166)))
             elevation = dp(12).toFloat()
             clipToPadding = false
         }
-        val navLabels = listOf("Home", "Chat", "Live", "Tools", "Shield", "Settings")
         val navButtons = mutableListOf<Button>()
         fun showTab(index: Int) {
-            if (index != 2 && liveSession != null) stopThorLive()
+            if (liveSession != null) stopThorLive()
             pages.forEachIndexed { pageIndex, view ->
                 view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
             }
             navButtons.forEachIndexed { buttonIndex, button ->
                 val selected = buttonIndex == index
-                button.setTextColor(if (selected) Color.WHITE else muted)
-                button.setBackground(premiumBackground(
-                    if (selected) Color.rgb(28, 91, 132) else Color.rgb(16, 29, 43),
-                    if (selected) Color.rgb(106, 205, 255) else Color.rgb(62, 102, 132)
-                ))
-                button.alpha = if (selected) 1f else 0.82f
-                button.elevation = if (selected) dp(5).toFloat() else 0f
+                button.alpha = if (selected) 1f else 0.78f
             }
         }
-        navLabels.forEachIndexed { index, label ->
-            val button = makeButton(label).apply {
-                textSize = 9.5f
-                setTextColor(muted)
-                setBackgroundColor(Color.TRANSPARENT)
-                setOnClickListener { showTab(index) }
-            }
-            navButtons.add(button)
-            nav.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val homeNav = makeButton("⌂\nHOME").apply {
+            textSize = 11f
+            setOnClickListener { showTab(0) }
         }
+        navButtons.add(homeNav)
+        nav.addView(homeNav, LinearLayout.LayoutParams(0, dp(58), 1f))
+
+        liveOrb = ThorLiveOrbView(this).apply {
+            contentDescription = "Tap to start or stop THOR Live Talking"
+            isClickable = true
+            setOnClickListener {
+                if (liveSession == null) startThorLive() else stopThorLive()
+            }
+        }
+        nav.addView(liveOrb, LinearLayout.LayoutParams(dp(76), dp(76)).apply {
+            setMargins(dp(8), -dp(10), dp(8), -dp(10))
+        })
+
+        val settingsNav = makeButton("⚙\nSETTINGS").apply {
+            textSize = 11f
+            setOnClickListener { showTab(4) }
+        }
+        navButtons.add(settingsNav)
+        nav.addView(settingsNav, LinearLayout.LayoutParams(0, dp(58), 1f))
         root.addView(nav, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dp(2), dp(6), dp(2), dp(8)) })
@@ -1053,7 +1069,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private fun handleIdentityName(identity: String) {
         val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
         val isAritra = normalized == "aritra" || normalized == "aritra adhikary"
-        val isDeep = normalized == "deep" || normalized == "deep dikshit"
+        val isDeep = normalized == "i am deep dikshit"
 
         if (isAritra || isDeep) {
             val title = if (isAritra) "Lord Aritra" else "Master Deep"
@@ -1495,6 +1511,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             return
         }
 
+        if (lower == "i am deep dikshit") {
+            handleIdentityName(command)
+            return
+        }
+
         if (isCreatorQuestion(lower)) {
             val reply = creatorLoreReply()
             addMessage("THOR", reply)
@@ -1502,7 +1523,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        if (lower in listOf("aritra", "aritra adhikary", "deep", "deep dikshit")) {
+        if (lower in listOf("aritra", "aritra adhikary")) {
             handleIdentityName(command)
             return
         }
