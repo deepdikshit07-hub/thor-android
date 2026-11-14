@@ -118,7 +118,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
-    private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
+    private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant", "JARVIS • British AI")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -439,12 +439,16 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }, matchWrap())
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
-        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE)
-            .getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        val voicePrefs = getSharedPreferences("thor_voice", MODE_PRIVATE)
+        if (!voicePrefs.getBoolean("jarvis_preset_applied", false)) {
+            voicePrefs.edit().putInt("style", 3).putBoolean("jarvis_preset_applied", true).apply()
+        }
+        voiceStyle.setSelection(voicePrefs.getInt("style", 3).coerceIn(0, voiceStyles.lastIndex))
         voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", position).apply()
+                setTtsLanguage()
                 applyVoiceStyle()
             }
         }
@@ -455,7 +459,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             val sample = when (language.selectedItemPosition) {
                 1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
                 2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
-                else -> "Hello. I am THOR. Systems are ready."
+                else -> if (voiceStyle.selectedItemPosition == 3)
+                    "Good day. THOR is online. How may I assist you?"
+                else "Hello. I am THOR. Systems are ready."
             }
             speak(sample)
         }
@@ -1802,7 +1808,18 @@ private fun launchIntent(
         when (voiceStyle.selectedItemPosition) {
             0 -> { engine.setPitch(0.82f); engine.setSpeechRate(0.90f) }
             1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
-            else -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
+            2 -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
+            3 -> {
+                engine.setPitch(0.90f)
+                engine.setSpeechRate(0.92f)
+                if (language.selectedItemPosition == 0) {
+                    val britishVoice = engine.voices
+                        ?.filter { it.locale.language.equals("en", true) &&
+                            it.locale.country.equals("GB", true) }
+                        ?.maxByOrNull { it.quality }
+                    if (britishVoice != null) engine.voice = britishVoice
+                }
+            }
         }
     }
 
@@ -1818,7 +1835,7 @@ private fun launchIntent(
         val locale = when (language.selectedItemPosition) {
             1 -> Locale("hi", "IN")
             2 -> Locale("bn", "IN")
-            else -> Locale("en", "IN")
+            else -> if (voiceStyle.selectedItemPosition == 3) Locale.UK else Locale("en", "IN")
         }
         val result = tts?.isLanguageAvailable(locale) ?: TextToSpeech.LANG_NOT_SUPPORTED
         if (result >= TextToSpeech.LANG_AVAILABLE) {
