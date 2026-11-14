@@ -65,9 +65,8 @@ class ThorBackgroundWakeService : Service() {
                             if (waitingForCommand) {
                                 waitingForCommand = false
                                 showCommandNotification(heard)
-                            } else if (normalized.contains("hey thor") || normalized == "thor") {
-                                val command = heard.substringAfter("hey thor", "")
-                                    .ifBlank { heard.substringAfter("thor", "") }
+                            } else if (normalized.contains("hey thor") || normalized == "thor" || normalized.startsWith("thor ")) {
+                                val command = if (normalized.contains("hey thor")) heard.substringAfter("hey thor", "") else heard.substringAfter("thor", "")
                                     .trim().trimStart(',', ':')
                                 if (command.isNotBlank()) showCommandNotification(command)
                                 else waitingForCommand = true
@@ -114,7 +113,8 @@ class ThorBackgroundWakeService : Service() {
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("THOR heard your command")
-            .setContentText(command.take(120).ifBlank { "Tap to open THOR" })
+            .setContentText("Tap to continue in THOR")
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setContentIntent(pending)
             .setAutoCancel(true)
             .setPriority(Notification.PRIORITY_HIGH)
