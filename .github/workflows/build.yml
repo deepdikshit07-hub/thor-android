@@ -8,6 +8,7 @@ on:
       - main
       - thor-2.0-upgrade
       - 'experiment/**'
+      - 'feature/**'
   pull_request:
     branches:
       - main
