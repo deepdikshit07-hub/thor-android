@@ -35,6 +35,8 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.os.Build
 import android.provider.AlarmClock
@@ -63,6 +65,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var voiceStyle: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var voiceStatus: TextView? = null
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
     private lateinit var securityAudit: ThorSecurityAuditLog
@@ -476,6 +479,22 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }
         settingsBody.addView(sectionLabel("Voice style"), matchWrap())
         settingsBody.addView(voiceStyle, matchWrap())
+        val hybridVoiceStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(muted)
+            setPadding(4, 4, 4, 8)
+            text = "Hybrid voice: checking installed English, Hindi and Bengali voices..."
+        }
+        voiceStatus = hybridVoiceStatus
+        settingsBody.addView(hybridVoiceStatus, matchWrap())
+        val refreshVoice = makeButton("REFRESH HYBRID VOICE")
+        refreshVoice.setOnClickListener {
+            setTtsLanguage()
+            applyVoiceStyle()
+            val status = voiceStatus?.text ?: "Voice availability refreshed."
+            Toast.makeText(this, status, Toast.LENGTH_LONG).show()
+        }
+        settingsBody.addView(refreshVoice, matchWrap())
         val previewVoice = makeButton("PREVIEW VOICE")
         previewVoice.setOnClickListener {
             val sample = when (language.selectedItemPosition) {
@@ -1957,8 +1976,59 @@ private fun launchIntent(
         }
     }
 
+    /**
+     * Hybrid voice policy:
+     * - With a validated internet connection, prefer a language-matched network voice.
+     * - Offline, prefer a language-matched voice that does not require the network.
+     * - If the preferred class is unavailable, fall back to any installed voice for the language,
+     *   then Android's language/default voice.
+     */
+    private fun hasValidatedInternet(): Boolean {
+        val connectivity = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val network = connectivity.activeNetwork ?: return false
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     private fun applyVoiceStyle() {
         val engine = tts ?: return
+        val wantedLocale = when (language.selectedItemPosition) {
+            1 -> Locale("hi", "IN")
+            2 -> Locale("bn", "IN")
+            else -> if (voiceStyle.selectedItemPosition == 3) Locale.UK else Locale("en", "IN")
+        }
+        val available = engine.voices.orEmpty().filter {
+            it.locale.language.equals(wantedLocale.language, ignoreCase = true)
+        }
+        val onlineAvailable = hasValidatedInternet()
+        val preferred = if (onlineAvailable) {
+            available.filter { it.isNetworkConnectionRequired }
+                .maxByOrNull { it.quality }
+        } else {
+            available.filter { !it.isNetworkConnectionRequired }
+                .maxByOrNull { it.quality }
+        }
+        val fallback = available.maxByOrNull { it.quality }
+        val selected = preferred ?: fallback
+        if (selected != null) {
+            try {
+                engine.voice = selected
+                val mode = if (selected.isNetworkConnectionRequired) "ONLINE" else "OFFLINE"
+                val languageName = when (selected.locale.language) {
+                    "hi" -> "Hindi"
+                    "bn" -> "Bengali"
+                    else -> "English"
+                }
+                voiceStatus?.text = "Hybrid voice: $mode • $languageName • ${selected.name}" +
+                    if (preferred == null) " (preferred voice unavailable; using installed fallback)" else ""
+            } catch (error: Exception) {
+                voiceStatus?.text = "Hybrid voice: Android default voice • ${error.message ?: "voice selection unavailable"}"
+            }
+        } else {
+            voiceStatus?.text = "Hybrid voice: no installed voice found for this language. Install voice data in Android Text-to-Speech settings."
+        }
+
         when (voiceStyle.selectedItemPosition) {
             0 -> { engine.setPitch(0.82f); engine.setSpeechRate(0.90f) }
             1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
@@ -1966,13 +2036,28 @@ private fun launchIntent(
             3 -> {
                 engine.setPitch(0.90f)
                 engine.setSpeechRate(0.92f)
-                if (language.selectedItemPosition == 0) {
-                    val britishVoice = engine.voices
-                        ?.filter { it.locale.language.equals("en", true) &&
-                            it.locale.country.equals("GB", true) && !it.isNetworkConnectionRequired }
-                        ?.maxByOrNull { it.quality }
-                    if (britishVoice != null) engine.voice = britishVoice
-                }
+            }
+        }
+    }
+
+    private fun setTtsLanguage() {
+        val locale = when (language.selectedItemPosition) {
+            1 -> Locale("hi", "IN")
+            2 -> Locale("bn", "IN")
+            else -> if (voiceStyle.selectedItemPosition == 3) Locale.UK else Locale("en", "IN")
+        }
+        val result = tts?.isLanguageAvailable(locale) ?: TextToSpeech.LANG_NOT_SUPPORTED
+        if (result >= TextToSpeech.LANG_AVAILABLE) {
+            tts?.language = locale
+        } else {
+            val languageOnly = Locale(locale.language)
+            val languageResult = tts?.isLanguageAvailable(languageOnly) ?: TextToSpeech.LANG_NOT_SUPPORTED
+            if (languageResult >= TextToSpeech.LANG_AVAILABLE) {
+                tts?.language = languageOnly
+                voiceStatus?.text = "Hybrid voice: using the installed ${locale.displayLanguage} voice without a regional variant."
+            } else {
+                tts?.language = Locale.ENGLISH
+                voiceStatus?.text = "Hybrid voice: ${locale.displayLanguage} voice data is unavailable. Install it in Android TTS settings."
             }
         }
     }
