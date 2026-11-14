@@ -18,6 +18,8 @@ android {
         applicationId = "com.thor.assistant"
         minSdk = 26
         targetSdk = 35
+    ndkVersion = "27.2.12479018"
+    ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         versionCode = 1
         versionName = "1.0"
     }
@@ -27,6 +29,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     buildTypes {
         release {
