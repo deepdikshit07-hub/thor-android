@@ -5,8 +5,6 @@ import android.util.Base64
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyStore
@@ -119,7 +117,7 @@ class ThorAiProviderManager(private val context: Context) {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+            val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val detail = runCatching {
                     JSONObject(response).optJSONObject("error")?.optString("message")
@@ -172,13 +170,18 @@ class ThorAiProviderManager(private val context: Context) {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val raw = BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { it.readText() }
+            val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
                 val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }
                     .getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
+                if (status == 429) {
+                    prefs.edit()
+                        .putLong("cooldown_until_${config.provider.name}", System.currentTimeMillis() + 60L * 60L * 1000L)
+                        .apply()
+                }
                 throw IllegalStateException(when (status) {
                     401, 403 -> "Gemini rejected the API key or permissions ($detail)."
-                    429 -> "Gemini API quota/rate limit reached. Check the Google AI Studio billing and quota settings. ($detail)"
+                    429 -> "Gemini API quota/rate limit reached. A one-hour cooldown is now active. ($detail)"
                     else -> "Gemini API request failed: $detail"
                 })
             }

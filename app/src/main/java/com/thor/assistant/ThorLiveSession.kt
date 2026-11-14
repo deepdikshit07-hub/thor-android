@@ -109,7 +109,11 @@ class ThorLiveSession(
                         )))
                         .put("realtimeInputConfig", JSONObject().put("automaticActivityDetection",
                             JSONObject().put("disabled", false)))
-                    webSocket.send(JSONObject().put("setup", setup).toString())
+                    if (!webSocket.send(JSONObject().put("setup", setup).toString())) {
+                        val error = IllegalStateException("Live setup message could not be sent.")
+                        if (!ready.isCompleted) ready.completeExceptionally(error)
+                        fail(error.message ?: "Live setup failed.")
+                    }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -168,7 +172,11 @@ class ThorLiveSession(
                     if (encoded.isNotBlank()) {
                         val bytes = Base64.decode(encoded, Base64.DEFAULT)
                         if (bytes.isNotEmpty()) {
-                            audioQueue.offer(bytes)
+                            if (!audioQueue.offer(bytes)) {
+                                // Prefer fresh speech over playing stale audio after a temporary slowdown.
+                                audioQueue.poll()
+                                audioQueue.offer(bytes)
+                            }
                             notifyState(State.SPEAKING, "THOR IS SPEAKING")
                         }
                     }
@@ -249,7 +257,10 @@ class ThorLiveSession(
                             .put("mimeType", "audio/pcm;rate=16000")
                             .put("data", Base64.encodeToString(frame.copyOf(count), Base64.NO_WRAP))
                     ))
-                    socket?.send(payload.toString())
+                    if (socket?.send(payload.toString()) != true) {
+                        fail("Live connection stopped accepting microphone audio.")
+                        break
+                    }
                 } else if (count < 0) {
                     fail("Microphone stream stopped (AudioRecord $count).")
                     break
@@ -263,7 +274,10 @@ class ThorLiveSession(
                 var offset = 0
                 while (offset < chunk.size && isActive && !stopped.get()) {
                     val written = output.write(chunk, offset, chunk.size - offset, AudioTrack.WRITE_BLOCKING)
-                    if (written <= 0) break
+                    if (written <= 0) {
+                        fail("Live audio playback stopped unexpectedly (AudioTrack $written).")
+                        return@launch
+                    }
                     offset += written
                 }
             }

@@ -118,6 +118,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var offlineAi: ThorOfflineAi
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val repeatingUiAnimators = mutableListOf<android.animation.Animator>()
     private var firebaseReady = false
     private lateinit var masterApprovalClient: ThorMasterApprovalClient
     private var wakeRecognizer: SpeechRecognizer? = null
@@ -322,12 +323,13 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             letterSpacing = 0.22f
         }
         homeBody.addView(homeTitle, matchWrap())
-        ObjectAnimator.ofFloat(homeTitle, "alpha", 0.72f, 1f).apply {
+        val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.72f, 1f).apply {
             duration = 1800L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
-            start()
         }
+        repeatingUiAnimators += homeTitleAnimator
+        homeTitleAnimator.start()
         homeBody.addView(TextView(this).apply {
             text = "YOUR PERSONAL AI ASSISTANT"
             textSize = 11f
@@ -855,21 +857,27 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
-        ObjectAnimator.ofFloat(reactor, "rotation", 0f, 360f).apply {
+        val reactorAnimator = ObjectAnimator.ofFloat(reactor, "rotation", 0f, 360f).apply {
             duration = 5200L
             repeatCount = ValueAnimator.INFINITE
             interpolator = android.view.animation.LinearInterpolator()
-            start()
         }
-        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
+        val titleAnimator = ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
             duration = 1100L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
-            start()
         }
+        repeatingUiAnimators += reactorAnimator
+        repeatingUiAnimators += titleAnimator
+        reactorAnimator.start()
+        titleAnimator.start()
         overlay.animate().alpha(1f).setDuration(450L).withEndAction {
             Handler(Looper.getMainLooper()).postDelayed({
                 overlay.animate().alpha(0f).setDuration(550L).withEndAction {
+                    reactorAnimator.cancel()
+                    titleAnimator.cancel()
+                    repeatingUiAnimators.remove(reactorAnimator)
+                    repeatingUiAnimators.remove(titleAnimator)
                     host.removeView(overlay)
                 }.start()
             }, 1900L)
@@ -2648,8 +2656,10 @@ private fun launchIntent(
         bossRecorder = null
         tts?.stop()
         tts?.shutdown()
-        offlineAi.close()
         mainScope.cancel()
+        repeatingUiAnimators.forEach { it.cancel() }
+        repeatingUiAnimators.clear()
+        offlineAi.close()
         super.onDestroy()
     }
 }
