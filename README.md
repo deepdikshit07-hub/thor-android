@@ -32,16 +32,15 @@ The APK includes the offline model assets downloaded by CI and can therefore be 
 
 ## THOR Live Mode setup
 
-THOR Live uses Google's bidirectional Gemini Live API rather than the normal text-chat request path. It streams microphone PCM audio directly to Gemini over a WebSocket and plays native model audio; the selected THOR voice style maps to a supported Gemini prebuilt voice. Live captions are transient UI text only. THOR does not append Live turns to the chat screen or write them to the app's chat/history storage. Ending the session closes the socket, stops microphone capture and playback, and clears the latest caption.
+THOR Live uses Google's bidirectional Gemini Live API over a WebSocket. It reuses the same Google Gemini API key saved on that installation under **Settings → AI Provider → Google Gemini (own API key)**; there is no second Live-only key, Worker URL, or Firebase sign-in step for this direct-key mode. The key is encrypted at rest with Android Keystore and is never committed to source control. As with any client-side BYOK app, a determined attacker with control of a compromised device may still inspect a key while the app is using it; use a key with appropriate API restrictions and quota limits.
 
-Live Mode uses the Cloudflare Worker URL already configured in **Master Mode Setup**. It also requires:
-1. Enable **Anonymous** sign-in in Firebase Authentication (or sign in through an existing THOR Firebase account).
-2. In Cloudflare Worker secrets, add `GEMINI_API_KEY` containing a Google AI Studio API key with Gemini Live API access. Never put this key in the APK, GitHub, or chat.
-3. Apply the updated D1 schema from `cloudflare/master-mode/schema.sql` using `npm run db:migrate:remote`, then deploy the updated Worker using `npm run deploy`.
-4. Keep the Firebase Web API key configured as `FIREBASE_WEB_API_KEY` Worker secret. The Worker authenticates Firebase ID tokens and limits token issuance to 12 requests per account per hour. Each issued Live token is single-use and short-lived.
-5. Open THOR's **LIVE** tab and start a session. The app uses the Worker URL configured on that device.
+1. In Google AI Studio, create a Gemini API key with access to a model that supports the Gemini Live API.
+2. In THOR, open **Settings → AI Provider**, select **Google Gemini (own API key)**, paste the key once, and save.
+3. Open **LIVE** and start a session. THOR reuses that saved key for the Live WebSocket connection.
+4. Grant microphone permission when Android asks. Headphones are recommended to reduce echo.
 
-Live Mode uses network data continuously while active and may incur Gemini API usage charges or quota limits. Use Wi-Fi or review the provider's pricing/quota before long sessions. Headphones are recommended to reduce speaker-to-microphone echo. The app stops the live microphone session when it leaves the foreground.
+Live Mode requires an internet connection while active and may incur Gemini API usage charges or quota limits. Ending the session closes the socket, stops microphone capture and playback, and clears the temporary caption. The optional Cloudflare /v1/live-token endpoint remains available for a future server-proxied deployment, but it is not required by the current Android Live client.
+
 
 ## AI provider setup
 
