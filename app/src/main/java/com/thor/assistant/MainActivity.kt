@@ -1586,6 +1586,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             .putString("task", task)
             .putString("stage", stage)
             .putInt("item_number", itemNumber)
+            .putLong("created_at", System.currentTimeMillis())
             .putString("seen_items", "")
             .apply()
 
