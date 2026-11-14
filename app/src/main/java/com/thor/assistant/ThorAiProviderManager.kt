@@ -258,7 +258,7 @@ class ThorAiProviderManager(private val context: Context) {
             val answer = buildString {
                 if (parts != null) for (i in 0 until parts.length()) {
                     val value = parts.optJSONObject(i)?.optString("text").orEmpty()
-                    if (value.isNotBlank()) { if (isNotEmpty()) append('\\n'); append(value) }
+                    if (value.isNotBlank()) { if (isNotEmpty()) append('\n'); append(value) }
                 }
             }
             return answer.takeIf { it.isNotBlank() } ?: error("Gemini returned no text. Check the selected model and key permissions.")
