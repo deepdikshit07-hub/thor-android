@@ -474,10 +474,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
         val voicePrefs = getSharedPreferences("thor_voice", MODE_PRIVATE)
-        if (!voicePrefs.getBoolean("jarvis_preset_applied", false)) {
-            voicePrefs.edit().putInt("style", 3).putBoolean("jarvis_preset_applied", true).apply()
+        // One-time voice migration: make the requested cinematic narrator the default
+        // for existing installs without repeatedly overriding the user's later choice.
+        if (!voicePrefs.getBoolean("cinematic_narrator_v1", false)) {
+            voicePrefs.edit()
+                .putInt("style", 0)
+                .putBoolean("cinematic_narrator_v1", true)
+                .apply()
         }
-        voiceStyle.setSelection(voicePrefs.getInt("style", 3).coerceIn(0, voiceStyles.lastIndex))
+        voiceStyle.setSelection(voicePrefs.getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
         voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
@@ -2230,7 +2235,9 @@ private fun launchIntent(
         }
 
         when (voiceStyle.selectedItemPosition) {
-            0 -> { engine.setPitch(0.82f); engine.setSpeechRate(0.90f) }
+            // Lower pitch and slightly slower delivery create a deeper, cinematic
+            // narrator effect while retaining intelligibility across Hindi and English.
+            0 -> { engine.setPitch(0.76f); engine.setSpeechRate(0.88f) }
             1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
             2 -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
             3 -> {
