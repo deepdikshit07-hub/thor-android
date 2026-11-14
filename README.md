@@ -7,6 +7,7 @@ being validated.
 ## Current project features
 
 - Dark, blue-accented assistant interface with five bottom-navigation sections.
+- Dedicated THOR LIVE bottom-navigation section with animated energy core, bidirectional Gemini Live audio, voice interruption support, and session-only captions (no local chat transcript storage).
 - Animated holographic reactor HUD and startup animation.
 - Custom THOR launcher artwork.
 - Text commands, Android speech-recognition handoff, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
@@ -29,6 +30,19 @@ GitHub Actions builds a debug APK when commits are pushed to `experiment/**`.
 4. Install it on an Android device after reviewing Android's installation prompt.
 
 The APK includes the offline model assets downloaded by CI and can therefore be very large.
+
+## THOR Live Mode setup
+
+THOR Live uses Google's bidirectional Gemini Live API rather than the normal text-chat request path. It streams microphone PCM audio directly to Gemini over a WebSocket and plays native model audio; the selected THOR voice style maps to a supported Gemini prebuilt voice. Live captions are transient UI text only. THOR does not append Live turns to the chat screen or write them to the app's chat/history storage. Ending the session closes the socket, stops microphone capture and playback, and clears the latest caption.
+
+Live Mode uses the Cloudflare Worker URL already configured in **Master Mode Setup**. It also requires:
+1. Enable **Anonymous** sign-in in Firebase Authentication (or sign in through an existing THOR Firebase account).
+2. In Cloudflare Worker secrets, add `GEMINI_API_KEY` containing a Google AI Studio API key with Gemini Live API access. Never put this key in the APK, GitHub, or chat.
+3. Apply the updated D1 schema from `cloudflare/master-mode/schema.sql` using `npm run db:migrate:remote`, then deploy the updated Worker using `npm run deploy`.
+4. Keep the Firebase Web API key configured as `FIREBASE_WEB_API_KEY` Worker secret. The Worker authenticates Firebase ID tokens and limits token issuance to 12 requests per account per hour. Each issued Live token is single-use and short-lived.
+5. Open THOR's **LIVE** tab and start a session. The app uses the Worker URL configured on that device.
+
+Live Mode uses network data continuously while active and may incur Gemini API usage charges or quota limits. Use Wi-Fi or review the provider's pricing/quota before long sessions. Headphones are recommended to reduce speaker-to-microphone echo. The app stops the live microphone session when it leaves the foreground.
 
 ## AI provider setup
 
