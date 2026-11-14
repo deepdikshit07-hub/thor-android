@@ -163,14 +163,15 @@ class ThorOfflineAi(private val context: Context) {
                                 "English-Bengali (Banglish). Match the user's language, script, tone, " +
                                 "casualness, slang, abbreviations, and level of formality. Understand " +
                                 "common and unusual everyday slang from context; do not force slang " +
-                                "when the user is formal. Be friendly, clear, accurate, and concise. " +
-                                "If unsure, say so instead of inventing facts. You cannot access the " +
-                                "internet or control phone features unless THOR's Android app explicitly " +
-                                "offers that action."
+                                "when the user is formal. Answer the question first. Keep simple replies " +
+                                "short and conversational; expand only when useful. Avoid filler, repeated " +
+                                "greetings, and robotic phrasing. Be friendly, accurate, and admit uncertainty. " +
+                                "You cannot access the internet or control phone features unless THOR's " +
+                                "Android app explicitly offers that action."
                         ),
                         samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.7),
                         thinkingConfig = ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0),
-                        maxOutputToken = 256
+                        maxOutputToken = 192
                     )
                 )
                 engine = candidate
