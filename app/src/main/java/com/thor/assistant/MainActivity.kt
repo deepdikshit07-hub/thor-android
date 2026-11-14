@@ -65,6 +65,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var voiceStyle: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var liveSession: ThorLiveSession? = null
+    private var liveOrb: ThorLiveOrbView? = null
+    private var liveStatusText: TextView? = null
+    private var liveCaptionText: TextView? = null
+    private var liveToggleButton: Button? = null
     private var voiceStatus: TextView? = null
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
@@ -357,6 +362,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
+        val livePage = buildLivePage()
+        contentFrame.addView(livePage, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
         val chatBody = page()
         val chatScroll = ScrollView(this)
         chat = TextView(this).apply {
@@ -567,16 +577,17 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         ))
         val settingsPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
-        val pages = listOf(homeScroll, chatBody, featuresPage, securityPage, settingsPage)
+        val pages = listOf(homeScroll, chatBody, livePage, featuresPage, securityPage, settingsPage)
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(0, 6, 0, 4)
             setBackgroundColor(Color.rgb(8, 16, 29))
         }
-        val navLabels = listOf("HOME", "CHAT", "FEATURES", "SECURITY", "SETTINGS")
+        val navLabels = listOf("HOME", "CHAT", "LIVE", "FEATURES", "SECURITY", "SETTINGS")
         val navButtons = mutableListOf<Button>()
         fun showTab(index: Int) {
+            if (index != 2 && liveSession != null) stopThorLive()
             pages.forEachIndexed { pageIndex, view ->
                 view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
             }
@@ -601,6 +612,166 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         setContentView(root)
         showTab(0)
         showStartupAnimation(contentFrame, blue, muted, background)
+    }
+
+    private fun buildLivePage(): LinearLayout {
+        val cyan = Color.rgb(65, 198, 255)
+        val muted = Color.rgb(145, 170, 195)
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(18, 22, 18, 18)
+            setBackgroundColor(Color.rgb(5, 9, 18))
+        }
+        body.addView(TextView(this).apply {
+            text = "THOR LIVE"
+            textSize = 27f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.18f
+            setTextColor(cyan)
+        }, matchWrap())
+        body.addView(TextView(this).apply {
+            text = "REAL-TIME VOICE • PRIVATE SESSION • NO CHAT HISTORY"
+            textSize = 9f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.07f
+            setTextColor(muted)
+        }, matchWrap())
+
+        val orb = ThorLiveOrbView(this)
+        liveOrb = orb
+        body.addView(orb, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (300 * resources.displayMetrics.density).toInt()
+        ).apply { setMargins(0, 14, 0, 10) })
+
+        val status = TextView(this).apply {
+            text = "READY FOR A LIVE CONVERSATION"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(cyan)
+        }
+        liveStatusText = status
+        body.addView(status, matchWrap())
+
+        val caption = TextView(this).apply {
+            text = "Your conversation stays temporary and is cleared when the session ends."
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(205, 220, 235))
+            maxLines = 2
+            setPadding(12, 10, 12, 14)
+        }
+        liveCaptionText = caption
+        body.addView(caption, matchWrap())
+
+        val toggle = makeButton("START LIVE SESSION").apply {
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(0, 105, 180))
+            setOnClickListener {
+                if (liveSession == null) startThorLive() else stopThorLive()
+            }
+        }
+        liveToggleButton = toggle
+        body.addView(toggle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(8, 12, 8, 8) })
+
+        body.addView(TextView(this).apply {
+            text = "Use headphones for clearer full-duplex conversation. Live Mode needs an internet connection."
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+            setPadding(10, 8, 10, 0)
+        }, matchWrap())
+        return body
+    }
+
+    private fun startThorLive() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1006)
+            return
+        }
+        if (masterApprovalClient.baseUrl.isBlank()) {
+            addMessage("THOR", "Set the HTTPS Cloudflare Worker URL in Master Mode setup before starting Live Mode.")
+            showMasterModeSetupDialog()
+            return
+        }
+        val auth = FirebaseAuth.getInstance()
+        if (auth.currentUser == null) {
+            liveStatusText?.text = "SIGNING IN SECURELY"
+            auth.signInAnonymously()
+                .addOnSuccessListener { beginThorLiveSession() }
+                .addOnFailureListener { error ->
+                    val message = "Live Mode needs Firebase Authentication. Enable Anonymous sign-in in Firebase Console, or sign in through Master Mode. " +
+                        (error.localizedMessage ?: "")
+                    liveStatusText?.text = "SIGN-IN REQUIRED"
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                }
+        } else {
+            beginThorLiveSession()
+        }
+    }
+
+    private fun beginThorLiveSession() {
+        if (liveSession != null || isFinishing || isDestroyed) return
+        val voiceName = when (voiceStyle.selectedItemPosition) {
+            1 -> "Aoede"
+            2 -> "Kore"
+            3 -> "Charon"
+            else -> "Charon"
+        }
+        val languageName = when (language.selectedItemPosition) {
+            1 -> "Hindi"
+            2 -> "Bengali"
+            else -> "English"
+        }
+        val session = ThorLiveSession(this, object : ThorLiveSession.Listener {
+            override fun onState(state: ThorLiveSession.State, detail: String) {
+                liveOrb?.setLiveState(state)
+                liveStatusText?.text = detail
+                liveToggleButton?.text = if (state == ThorLiveSession.State.IDLE ||
+                    state == ThorLiveSession.State.ERROR) "START LIVE SESSION" else "END LIVE SESSION"
+                if (state == ThorLiveSession.State.IDLE) {
+                    liveCaptionText?.text = "Your live conversation has ended. No transcript was saved."
+                }
+            }
+
+            override fun onTranscript(speaker: String, text: String) {
+                // Only the latest caption is rendered; no transcript list or database writes.
+                liveCaptionText?.text = "$speaker  •  $text"
+            }
+
+            override fun onError(message: String) {
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+            }
+        })
+        liveSession = session
+        liveToggleButton?.text = "CONNECTING..."
+        liveStatusText?.text = "SECURING LIVE CONNECTION"
+        mainScope.launch {
+            try {
+                session.start(masterApprovalClient.baseUrl, voiceName, languageName)
+            } catch (error: Exception) {
+                if (liveSession === session) liveSession = null
+                liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
+                liveStatusText?.text = "LIVE MODE UNAVAILABLE"
+                liveToggleButton?.text = "START LIVE SESSION"
+                liveCaptionText?.text = error.message ?: "Could not start the live session."
+            }
+        }
+    }
+
+    private fun stopThorLive() {
+        val session = liveSession ?: return
+        liveSession = null
+        session.stop()
+        liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
+        liveStatusText?.text = "SESSION ENDED"
+        liveToggleButton?.text = "START LIVE SESSION"
+        liveCaptionText?.text = "Your live conversation has ended. No transcript was saved."
     }
 
     private fun showStartupAnimation(
@@ -1582,6 +1753,10 @@ lower.startsWith("অ্যালার্ম ") -> {
                     addMessage("THOR", "Reminder alarms are saved, but Android notification permission is off. Enable it in app settings to receive reminder alerts.")
                 }
             }
+            1006 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startThorLive()
+                else Toast.makeText(this, "Microphone permission is required for THOR Live.", Toast.LENGTH_LONG).show()
+            }
             1004 -> {
                 if (pendingBossVoiceEnrollment) {
                     pendingBossVoiceEnrollment = false
@@ -2293,9 +2468,11 @@ private fun launchIntent(
     }
 
     override fun onPause() {
+        val liveWasActive = liveSession != null
+        if (liveWasActive) stopThorLive()
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
-        if (getSharedPreferences("thor_wake", MODE_PRIVATE).getBoolean("background_enabled", false) &&
+        if (!liveWasActive && getSharedPreferences("thor_wake", MODE_PRIVATE).getBoolean("background_enabled", false) &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         ) {
             try {
@@ -2317,6 +2494,7 @@ private fun launchIntent(
     }
 
     override fun onDestroy() {
+        stopThorLive()
         stopWakeWord()
         try { tapRecognizer?.cancel() } catch (_: Exception) {}
         tapRecognizer?.destroy()
