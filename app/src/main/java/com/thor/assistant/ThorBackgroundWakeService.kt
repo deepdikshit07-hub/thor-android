@@ -36,6 +36,7 @@ class ThorBackgroundWakeService : Service() {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED ||
             !SpeechRecognizer.isRecognitionAvailable(this)
         ) {
+            Log.e(TAG, "Background wake unavailable: microphone permission or speech-recognition provider missing")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -52,7 +53,7 @@ class ThorBackgroundWakeService : Service() {
 
                     override fun onError(error: Int) {
                         if (stopped) return
-                        Log.w(TAG, "Background recognizer error=$error")
+                        Log.e(TAG, "Background recognizer error=$error")
                         scheduleRestart(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1600L else 900L)
                     }
 
@@ -91,7 +92,7 @@ class ThorBackgroundWakeService : Service() {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra("android.speech.extra.PREFER_OFFLINE", true)
+                    // Do not require an offline speech pack; allow the installed provider to use its available path.
                 }
                 recognizer?.startListening(request)
             } catch (error: Exception) {
