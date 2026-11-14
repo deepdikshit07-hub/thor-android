@@ -1208,24 +1208,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             lower.contains("instagram") && (lower.contains("reel") || lower.contains("short video")) ->
                 startNavigationTask("com.instagram.android", "INSTAGRAM_REELS", "WAIT_REELS", 0)
 
-            lower == "ai mobile data on" -> {
-                getSharedPreferences("thor_data_saver", MODE_PRIVATE).edit()
-                    .putBoolean("ai_mobile_data_allowed", true).apply()
-                addMessage("THOR", "Mobile data is now allowed for online AI. Use 'ai mobile data off' to turn it off.")
-            }
-
-            lower == "ai mobile data off" -> {
-                getSharedPreferences("thor_data_saver", MODE_PRIVATE).edit()
-                    .putBoolean("ai_mobile_data_allowed", false).apply()
-                addMessage("THOR", "Data Saver enabled. Online AI will use Wi-Fi only.")
-            }
-
-            lower == "ai data status" -> {
-                val allowed = getSharedPreferences("thor_data_saver", MODE_PRIVATE)
-                    .getBoolean("ai_mobile_data_allowed", false)
-                addMessage("THOR", if (allowed) "Online AI may use mobile data." else "Online AI is Wi-Fi only.")
-            }
-
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
@@ -1624,14 +1606,6 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
-    private fun isWifiConnected(): Boolean {
-        val connectivity = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
-        val network = connectivity.activeNetwork ?: return false
-        val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }
-
     private fun askGemini(prompt: String) {
         if (!firebaseReady) {
             askLocalOrFallback(prompt)
@@ -1639,13 +1613,6 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
 
         val prefs = getSharedPreferences("thor_data_saver", MODE_PRIVATE)
-        val mobileDataAllowed = prefs.getBoolean("ai_mobile_data_allowed", false)
-        if (!isWifiConnected() && !mobileDataAllowed) {
-            addMessage("THOR", "Data Saver: online AI is paused on mobile data. Connect to Wi-Fi, or enable mobile data with 'ai mobile data on'.")
-            askLocalOrFallback(prompt)
-            return
-        }
-
         val quotaBlockedUntil = prefs.getLong("gemini_quota_blocked_until", 0L)
         if (System.currentTimeMillis() < quotaBlockedUntil) {
             val minutes = ((quotaBlockedUntil - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
@@ -2050,7 +2017,6 @@ private fun launchIntent(
         "• hey THOR (visible wake listening while THOR is open)\n" +
         "• pause music / next song / previous song / volume up\n" +
         "• wifi settings / bluetooth settings\n" +
-        "• ai data status / ai mobile data on / ai mobile data off\n" +
         "• what time is it\n" +
         "• search space news\n" +
         "• teach me that no cap means I am serious\n" +
