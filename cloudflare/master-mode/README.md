@@ -1,6 +1,6 @@
 # THOR Master Mode approval service (Cloudflare Worker + D1)
 
-This is the server-side foundation for remote biometric approval on the free Cloudflare Workers/D1 plans. It is intentionally separate from the Android app and must be deployed before the app can use it.
+This is the server-side foundation for remote biometric approval on the free Cloudflare Workers/D1 plans. It is intentionally separate from the Android app and must be deployed and configured before the app can use it.
 
 ## Security model
 
@@ -17,28 +17,29 @@ A fingerprint image or fingerprint template is never uploaded. Biometrics are pr
 
 ## Current implementation boundary
 
-The Android branch includes the Worker API client, Firebase Messaging notification receiver, Device A registration with a Keystore public key, Device B request/poll flow, biometric approval prompt, Firebase custom-token sign-in, session status checks, an "I quit" session-end request, and a Device A session-revocation command (`revoke master sessions`). The latest Android CI build on this branch passed, but the app has not yet been installed or tested on physical phones. The Worker must be deployed and configured before the approval flow can work. Do not use the old email OTP flow as a security fallback; its Cloud Functions were not deployed.
+The Android branch includes the Worker API client, Firebase Messaging notification receiver, Device A registration with a Keystore public key, Device B request/poll flow, biometric approval prompt, Firebase custom-token sign-in, session status checks, an "I quit" session-end request, and a Device A session-revocation command (`revoke master sessions`). The app has not yet been installed or tested on physical phones. Do not use the old email OTP flow as a security fallback; its Cloud Functions were not deployed.
 
 ## One-time Cloudflare setup
 
-1. Install Node.js on a computer (or use an environment with Node/npm) and run `npm install` in this directory.
-2. Create the D1 database: `npm run db:create`. Copy the returned database ID into `wrangler.toml`.
-3. Apply the schema: `npm run db:migrate:remote`.
-4. In Firebase Console, create/identify the Firebase Authentication account used only by Device A. Copy its UID and set it as the Worker secret `MASTER_UID`.
+1. Install Node.js in an environment with Node/npm and run `npm install` in this directory.
+2. The D1 database is `thor-master-approval`; its ID is configured in `wrangler.toml`.
+3. Apply the schema with `npm run db:migrate:remote` if it has not already been applied.
+4. In Firebase Console, identify the Firebase Authentication account used only by Device A. Copy its UID and set it as the Worker secret `MASTER_UID`.
 5. Create a service account for the same Firebase project with permission to send Firebase Cloud Messaging messages and mint Firebase custom tokens. Download its JSON privately. Never commit it.
-6. Set secrets with Wrangler:
-   - `npx wrangler secret put MASTER_UID`
-   - `npx wrangler secret put FIREBASE_WEB_API_KEY` (use the Firebase project's Web API key from Project settings; it is an app identifier, not a password)
-   - `npx wrangler secret put FIREBASE_SERVICE_ACCOUNT_JSON` (paste the complete service-account JSON when prompted)
-7. Deploy: `npm run deploy`.
-8. Test `GET https://YOUR-WORKER.workers.dev/health`. It should return `{"ok":true,"service":"thor-master-approval"}`.
+6. Set these Worker secrets privately in Cloudflare:
+   - `MASTER_UID`
+   - `FIREBASE_WEB_API_KEY`
+   - `FIREBASE_SERVICE_ACCOUNT_JSON`
+7. The Worker also needs the plain-text variable `FIREBASE_PROJECT_ID=thor-ai-2791b` and D1 binding `DB` pointing to `thor-master-approval`.
+8. Deploy from this directory with `npm run deploy`.
+9. Test `GET https://YOUR-WORKER.workers.dev/health`. It should return `{"ok":true,"service":"thor-master-approval"}`.
 
 ## Firebase account preparation
 
 1. In Firebase Console for `thor-ai-2791b`, confirm Email/Password sign-in is enabled.
-2. Create one Firebase Authentication user for Device A using the trusted master email. Copy that user's **UID** and configure it as the Cloudflare `MASTER_UID` secret.
+2. Create or identify one Firebase Authentication user for Device A using the trusted master account. Configure only its UID as the Cloudflare `MASTER_UID` secret.
 3. Create a separate Firebase Authentication user for Device B. Device B's Firebase UID is the account that receives the custom-token Master session.
-4. Never send either account password or the service-account JSON in this chat, GitHub, or a source file. Enter account passwords only in THOR's setup dialog on the relevant phone.
+4. Never send either account password or the service-account JSON in chat, GitHub, or a source file. Enter account passwords only in THOR's setup dialog on the relevant phone.
 
 On Device A, open THOR > MASTER MODE SETUP, enter the Worker URL and the trusted Firebase account, then choose **SET UP DEVICE A**. On Device B, open the same dialog, enter the Worker URL and Device B Firebase account, then choose **REQUEST ON DEVICE B**. Device A receives a notification; tap it and approve only if you initiated the request.
 
@@ -64,4 +65,4 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 - The custom token is short-lived (one hour) and is exchanged by Firebase Auth for its normal persisted user session. The session itself has no fixed application timeout; remote revocation is enforced when the app checks the Worker.
 - The Android client must check session revocation on app start/resume and before privileged actions. Offline operation cannot discover a new remote revocation until connectivity returns.
 - Configure Firebase Authentication and FCM for the same project (`thor-ai-2791b`). The Worker uses the Firebase project ID in `wrangler.toml`.
-- Before production use, add automated integration tests, abuse monitoring, and a second-device test matrix. This backend source is not proof of a successful deployment.
+- Before production use, add integration tests, abuse monitoring, and a second-device test matrix. A successful deployment and a passing health check do not replace real-device verification.
