@@ -33,11 +33,11 @@ class ThorWhisperEngine {
 
     suspend fun transcribe(filesDir: File, language: String, onStatus: (String) -> Unit): String =
         withContext(Dispatchers.IO) {
+            cancelRequested = false
             require(language in setOf("en", "hi", "bn")) { "Choose English, Hindi, or Bengali." }
             val model = ensureModel(filesDir, onStatus)
             loadModel(model, onStatus)
             onStatus("Listening… speak now")
-            cancelRequested = false
             val audio = recordSpeech()
             onStatus("Transcribing on this device…")
             val result = native.nativeTranscribe(nativeContext, audio, language).trim()
