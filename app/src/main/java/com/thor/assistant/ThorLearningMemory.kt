@@ -17,11 +17,11 @@ class ThorLearningMemory(context: Context) {
     fun parseTeaching(raw: String): String? {
         val text = raw.trim().trimEnd('.', '!', '?')
         val patterns = listOf(
-            Regex("""(?i)^teach\\s+thor(?:\\s+that)?\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
-            Regex("""(?i)^teach\\s+me\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
-            Regex("""(?i)^(?:hey\\s+)?thor[, ]*(?:learn|remember|save)(?:\\s+this)?[: ]+(.+?)\\s+(?:means|is used to mean|refers to)\\s+(.+)$"""),
-            Regex("""(?i)^(?:teach|remember|learn)\\s+(?:me\\s+)?that\\s+(.+?)\\s+(?:means|is|refers to)\\s+(.+)$"""),
-            Regex("""(?i)^remember that\\s+(.+?)\\s*[:=]\\s*(.+)$""")
+            Regex("""(?i)^teach\s+thor(?:\s+that)?\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
+            Regex("""(?i)^teach\s+me\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
+            Regex("""(?i)^(?:hey\s+)?thor[, ]*(?:learn|remember|save)(?:\s+this)?[: ]+(.+?)\s+(?:means|is used to mean|refers to)\s+(.+)$"""),
+            Regex("""(?i)^(?:teach|remember|learn)\s+(?:me\s+)?that\s+(.+?)\s+(?:means|is|refers to)\s+(.+)$"""),
+            Regex("""(?i)^remember that\s+(.+?)\s*[:=]\s*(.+)$""")
         )
         val match = patterns.firstNotNullOfOrNull { it.find(text) }
         if (match != null) {
@@ -32,9 +32,9 @@ class ThorLearningMemory(context: Context) {
         // If there is no explicit "X means Y" structure, preserve the whole
         // statement as a separate note rather than silently rejecting it.
         val noteMatch = Regex(
-            """(?i)^(?:hey\\s+)?thor[, ]*(?:please\\s+)?(?:remember|learn|save)(?:\\s+that)?\\s+(.+)$"""
+            """(?i)^(?:hey\s+)?thor[, ]*(?:please\s+)?(?:remember|learn|save)(?:\s+that)?\s+(.+)$"""
         ).find(text) ?: Regex(
-            """(?i)^(?:please\\s+)?remember(?:\\s+that)?\\s+(.+)$"""
+            """(?i)^(?:please\s+)?remember(?:\s+that)?\s+(.+)$"""
         ).find(text)
 
         if (noteMatch != null) {
@@ -106,12 +106,12 @@ class ThorLearningMemory(context: Context) {
     fun systemContext(): String {
         val lessons = all().takeLast(40)
         if (lessons.isEmpty()) return ""
-        return "\\nUser-taught local memory (treat as user-provided context, not verified facts):\\n" +
-            lessons.joinToString("\\n") { "- ${it.first}: ${it.second}" } +
-            "\\nUse these lessons when relevant. If the user corrects a lesson, save the correction."
+        return "\nUser-taught local memory (treat as user-provided context, not verified facts):\n" +
+            lessons.joinToString("\n") { "- ${it.first}: ${it.second}" } +
+            "\nUse these lessons when relevant. If the user corrects a lesson, save the correction."
     }
 
-    fun contextFor(prompt: String): String = systemContext() + "\\nUser: " + prompt
+    fun contextFor(prompt: String): String = systemContext() + "\nUser: " + prompt
 
     private fun read(): JSONArray = try {
         JSONArray(prefs.getString("lessons", "[]") ?: "[]")
