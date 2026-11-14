@@ -208,8 +208,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             textSize = 13f
         }
         bossSetupStatus = status
-        val recordButton = Button(this).apply { text = "ENROLL BOSS VOICE (3 × 5 SECONDS)" }
-        val finishButton = Button(this).apply { text = "FINISH WITHOUT VOICE SAMPLE" }
+        val recordButton = makeButton("ENROLL BOSS VOICE (3 × 5 SECONDS)")
+        val finishButton = makeButton("FINISH WITHOUT VOICE SAMPLE")
         panel.addView(explanation)
         panel.addView(nameInput)
         panel.addView(recordButton)
@@ -490,6 +490,12 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
         settingsBody.addView(testGeminiButton, matchWrap())
         settingsBody.addView(TextView(this).apply {
+            text = "For this debug APK, if App Check blocks Gemini, register the DebugAppCheckProvider token from Android Logcat in Firebase Console → App Check → Apps → Manage debug tokens. Keep that token private."
+            textSize = 11f
+            setTextColor(muted)
+            setPadding(dp(4), dp(2), dp(4), dp(8))
+        }, matchWrap())
+        settingsBody.addView(TextView(this).apply {
             text = "Choose Gemini, OpenAI / ChatGPT, Groq, OpenRouter, Cloudflare, a compatible custom API, or on-device AI. API keys are encrypted on this phone."
             textSize = 12f
             setTextColor(muted)
@@ -606,6 +612,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             navButtons.add(button)
             nav.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
+        nav.background = premiumBackground(Color.rgb(8, 16, 29), Color.rgb(26, 58, 82))
+        nav.elevation = dp(5).toFloat()
         root.addView(nav, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ))
