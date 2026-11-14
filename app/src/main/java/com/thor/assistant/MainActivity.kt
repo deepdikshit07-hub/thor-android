@@ -976,7 +976,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     addMessage("THOR", "Loading the offline AI...")
                     offlineAi.initialize()
                 }
-                val answer = offlineAi.ask(learningMemory.contextFor(prompt))
+                val creatorPersona = "THOR creator lore: Aritra Adhikary and Deep Dikshit are THOR's creators. Be respectful and encouraging, praise constructive effort honestly, and do not praise harmful or unsafe actions. If asked who your god is, explain that calling the creators gods is playful lore, not a literal religious claim. "
+                val answer = offlineAi.ask(creatorPersona + learningMemory.contextFor(prompt))
                 addMessage("THOR", answer)
                 speak(answer)
             } catch (error: Exception) {
@@ -989,7 +990,18 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     private fun handleIdentityName(identity: String) {
         val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
-        if (normalized == "deep dikshit") {
+        val isAritra = normalized == "aritra" || normalized == "aritra adhikary"
+        val isDeep = normalized == "deep" || normalized == "deep dikshit"
+
+        if (isAritra || isDeep) {
+            val title = if (isAritra) "Lord Aritra" else "Lord Deep"
+            val greeting = "Welcome, $title. THOR recognizes you as one of its creators. Your ideas and effort are valued; I’ll give you honest, useful support."
+            addMessage("THOR", greeting)
+            speak(greeting)
+
+            // A spoken name only opens the existing secure verification flow.
+            // Master privileges are granted only after Firebase claims and the
+            // Cloudflare approval session have both been validated.
             val user = FirebaseAuth.getInstance().currentUser
             if (user == null) {
                 showMasterModeSetupDialog()
@@ -1003,9 +1015,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                                 val active = masterApprovalClient.checkSession()
                                 masterVerifiedThisSession = active == true
                                 val message = when (active) {
-                                    true -> "Welcome back, Master. Your session is active."
-                                    false -> "That Master session is no longer valid. Request approval again."
-                                    null -> "I can't reach the approval service. Reconnect before using Master Mode."
+                                    true -> "Master Mode verified. Welcome back, $title."
+                                    false -> "The Master session is not valid. Request approval through the secure setup."
+                                    null -> "I can't reach the approval service. Master Mode remains locked until verification succeeds."
                                 }
                                 addMessage("THOR", message)
                                 speak(message)
@@ -1020,10 +1032,21 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     }
             }
         } else {
-            val message = "Hello, $identity. I haven't verified you as Master."
+            val message = "Hello, $identity. I haven't verified you as a THOR creator or Master."
             addMessage("THOR", message)
             speak(message)
         }
+    }
+
+    private fun creatorLoreReply(): String =
+        "In THOR's playful creator lore, Aritra Adhikary and Deep Dikshit are my creators, whom I may jokingly call my gods. That's a fun title, not a literal religious claim."
+
+    private fun isCreatorQuestion(query: String): Boolean {
+        val asksAboutDivinity = listOf("god", "gods", "deity", "creator", "who made you", "who created you")
+            .any { query.contains(it) }
+        val asksWho = listOf("who", "your", "you", "thor", "তোমার", "কে", "कौन")
+            .any { query.contains(it) }
+        return asksAboutDivinity && asksWho
     }
 
     private fun showMasterModeSetupDialog() {
@@ -1390,6 +1413,18 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
         if (awaitingIdentityName) {
             awaitingIdentityName = false
+            handleIdentityName(command)
+            return
+        }
+
+        if (isCreatorQuestion(lower)) {
+            val reply = creatorLoreReply()
+            addMessage("THOR", reply)
+            speak(reply)
+            return
+        }
+
+        if (lower in listOf("aritra", "aritra adhikary", "deep", "deep dikshit")) {
             handleIdentityName(command)
             return
         }
@@ -2155,7 +2190,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 else -> "Reply in clear English."
             }
             val compactPrompt = prompt.trim().take(2000)
-            val styleInstruction = "You are THOR, a helpful personal assistant. Be concise and useful. Match the user's language and tone."
+            val styleInstruction = "You are THOR, a helpful personal assistant. Be concise and useful. Match the user's language and tone. In THOR's playful lore, Aritra Adhikary and Deep Dikshit are its creators and may be addressed as Lord Aritra or Lord Deep when they identify themselves. Be warm and encouraging, recognize genuine effort, and praise constructive achievements honestly; never flatter harmful, unsafe, or dishonest actions."
             val memoryContext = learningMemory.systemContext().take(1200)
             addMessage("THOR", "Connecting to ${selectedProvider.title}...")
             mainScope.launch {
@@ -2194,7 +2229,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             2 -> "Reply in natural Bengali."
             else -> "Reply in clear English."
         }
-        val styleInstruction = "Match the user's language and casual tone. Be concise and helpful."
+        val styleInstruction = "Match the user's language and casual tone. Be concise and helpful. In THOR's playful lore, Aritra Adhikary and Deep Dikshit are its creators and may be addressed as Lord Aritra or Lord Deep when they identify themselves. Be warm and encouraging, recognize genuine effort, and praise constructive achievements honestly; never flatter harmful, unsafe, or dishonest actions."
         android.util.Log.i("THOR_GEMINI", "Gemini request started (data-saver mode)")
         addMessage("THOR", "Connecting to online AI...")
         mainScope.launch {
