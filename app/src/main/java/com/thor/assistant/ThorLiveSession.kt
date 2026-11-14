@@ -71,7 +71,6 @@ class ThorLiveSession(
     private var track: AudioTrack? = null
     private var captureJob: Job? = null
     private var playbackJob: Job? = null
-    private var setupReady: CompletableDeferred<Unit>? = null
     private var previousAudioMode: Int? = null
 
     suspend fun start(workerUrl: String, voiceName: String, languageName: String) {
@@ -81,7 +80,6 @@ class ThorLiveSession(
         try {
             val token = ThorLiveTokenClient().create(workerUrl, voiceName)
             val ready = CompletableDeferred<Unit>()
-            setupReady = ready
             val request = Request.Builder()
                 .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=" + java.net.URLEncoder.encode(token, "UTF-8"))
                 .build()
@@ -100,7 +98,7 @@ class ThorLiveSession(
                                 "You are THOR, a calm, capable, natural voice assistant. Speak conversationally, warmly and concisely. " +
                                 "Sound like an original deep, powerful cinematic narrator, not an imitation of any actor or film character. " +
                                 "Respond in $languageName unless the user naturally switches language. " +
-                                "Do not mention chat logs. This is a temporary live conversation. " +
+                                "This is a temporary live conversation. " +
                                 "Do not claim to perform actions you have not completed."
                             )
                         )))
@@ -258,7 +256,9 @@ class ThorLiveSession(
         }
     }
 
-    fun stop() {
+    fun stop() = releaseResources(State.IDLE, "SESSION ENDED")
+
+    private fun releaseResources(finalState: State, detail: String) {
         if (!stopped.compareAndSet(false, true)) return
         captureJob?.cancel()
         playbackJob?.cancel()
@@ -268,7 +268,7 @@ class ThorLiveSession(
         try { track?.pause(); track?.flush(); track?.release() } catch (_: Exception) {}
         track = null
         audioQueue.clear()
-        socket?.close(1000, "User ended THOR Live session")
+        socket?.close(1000, "THOR Live session ended")
         socket = null
         previousAudioMode?.let { mode ->
             try {
@@ -276,18 +276,20 @@ class ThorLiveSession(
             } catch (_: Exception) {}
         }
         previousAudioMode = null
-        notifyState(State.IDLE, "SESSION ENDED")
+        scope.cancel()
+        client.dispatcher.executorService.shutdown()
+        client.connectionPool.evictAll()
+        notifyState(finalState, detail)
     }
 
     private fun fail(message: String) {
         if (stopped.get()) return
-        notifyState(State.ERROR, "CONNECTION ERROR")
         mainHandler.post { listener.onError(message) }
-        stop()
+        releaseResources(State.ERROR, "CONNECTION ERROR")
     }
 
     private fun notifyState(state: State, detail: String) {
-        mainHandler.post { if (!stopped.get() || state == State.IDLE) listener.onState(state, detail) }
+        mainHandler.post { listener.onState(state, detail) }
     }
 
     private fun notifyTranscript(speaker: String, text: String) {
