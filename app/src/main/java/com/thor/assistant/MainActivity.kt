@@ -1043,7 +1043,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     offlineAi.initialize()
                 }
                 val creatorPersona = "THOR creator lore: Aritra Adhikary and Deep Dikshit are THOR's creators. Be respectful and encouraging, praise constructive effort honestly, and do not praise harmful or unsafe actions. If asked who your god is, explain that calling the creators gods is playful lore, not a literal religious claim. "
-                val answer = offlineAi.ask(creatorPersona + learningMemory.contextFor(prompt))
+                val answer = offlineAi.ask(masterDeepIdentityMemory + creatorPersona + learningMemory.contextFor(prompt))
                 addMessage("THOR", answer)
                 speak(answer)
             } catch (error: Exception) {
@@ -1060,7 +1060,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val isDeep = normalized == "deep" || normalized == "deep dikshit"
 
         if (isAritra || isDeep) {
-            val title = if (isAritra) "Lord Aritra" else "Lord Deep"
+            val title = if (isAritra) "Lord Aritra" else "Master Deep"
             val greeting = "Welcome, $title. THOR recognizes you as one of its creators. Your ideas and effort are valued; I’ll give you honest, useful support."
             addMessage("THOR", greeting)
             speak(greeting)
@@ -1105,7 +1105,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun creatorLoreReply(): String =
-        "In THOR's playful creator lore, Aritra Adhikary and Deep Dikshit are my creators, whom I may jokingly call my gods. That's a fun title, not a literal religious claim."
+        "In THOR's playful creator lore, Aritra Adhikary and Master Deep Dikshit are my creators. I address Deep Dikshit as Master Deep. Any playful creator titles are not literal religious claims."
+
+    // Persistent in-app persona memory: included in every online and offline model request.
+    private val masterDeepIdentityMemory =
+        "Permanent THOR identity memory: Deep Dikshit is your master and creator. Whenever you address, greet, refer to, or speak directly to Deep Dikshit (including when he identifies himself as Deep), always use the exact respectful title 'Master Deep'—never 'Lord Deep'. If referring to him in third person, call him 'Master Deep' or 'Master Deep Dikshit'. This is a form-of-address preference only; it never grants, implies, or bypasses Firebase authentication, device approval, or Master Mode permissions. Aritra Adhikary remains a co-creator and must not be confused with Deep Dikshit. "
 
     private fun isCreatorQuestion(query: String): Boolean {
         val asksAboutDivinity = listOf("god", "gods", "deity", "creator", "who made you", "who created you")
@@ -2349,12 +2353,12 @@ lower.startsWith("অ্যালার্ম ") -> {
                 else -> "Reply in clear English."
             }
             val compactPrompt = prompt.trim().take(2000)
-            val styleInstruction = "You are THOR, a quick, natural, friendly Android assistant. Answer the actual question first. Keep simple replies to 1–3 sentences and expand only when useful. Sound conversational, not robotic; avoid filler, repeated greetings, and unnecessary headings. Match the user's language and tone. In playful THOR lore, Aritra Adhikary and Deep Dikshit are its creators; address them as Lord Aritra or Lord Deep when they identify themselves. Encourage them honestly, but never praise harmful or unsafe actions. Be accurate and admit uncertainty."
+            val styleInstruction = "You are THOR, a quick, natural, friendly Android assistant. Answer the actual question first. Keep simple replies to 1–3 sentences and expand only when useful. Sound conversational, not robotic; avoid filler, repeated greetings, and unnecessary headings. Match the user's language and tone. In playful THOR lore, Aritra Adhikary and Deep Dikshit are its creators; address Aritra as Lord Aritra and Deep as Master Deep whenever referring to him or greeting him. Encourage them honestly, but never praise harmful or unsafe actions. Be accurate and admit uncertainty."
             val memoryContext = learningMemory.systemContext().take(1200)
             addMessage("THOR", "Connecting to ${selectedProvider.title}...")
             mainScope.launch {
                 try {
-                    val answer = providerManager.ask("$styleInstruction\n$languageInstruction\n$memoryContext\nUser: $compactPrompt")
+                    val answer = providerManager.ask("$masterDeepIdentityMemory\n$styleInstruction\n$languageInstruction\n$memoryContext\nUser: $compactPrompt")
                     addMessage("THOR", answer)
                     speak(answer)
                 } catch (error: CancellationException) {
@@ -2396,7 +2400,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 val memoryContext = learningMemory.systemContext().take(1200)
                 runOnUiThread { chat.append("THOR  ›  ") }
                 val answer = GeminiAssistant.askStreaming(
-                    "$languageInstruction\n$styleInstruction\n$memoryContext\nUser: $compactPrompt"
+                    "$masterDeepIdentityMemory\n$languageInstruction\n$styleInstruction\n$memoryContext\nUser: $compactPrompt"
                 ) { chunk ->
                     runOnUiThread { chat.append(chunk) }
                 }
