@@ -72,7 +72,11 @@ class ThorAiProviderManager(private val context: Context) {
             .apply()
     }
 
-    fun clearKey(provider: Provider) {\n        prefs.edit().remove("api_key_${provider.name}").apply()\n    }\n\n    suspend fun ask(prompt: String, maxTokens: Int = 256): String = withContext(Dispatchers.IO) {
+    fun clearKey(provider: Provider) {
+        prefs.edit().remove("api_key_${provider.name}").apply()
+    }
+
+    suspend fun ask(prompt: String, maxTokens: Int = 256): String = withContext(Dispatchers.IO) {
         val config = settings()
         val blockedUntil = prefs.getLong("cooldown_until_${config.provider.name}", 0L)
         if (System.currentTimeMillis() < blockedUntil) {
