@@ -2139,21 +2139,6 @@ private fun launchIntent(
         }
     }
 
-    private fun setTtsLanguage() {
-        val locale = when (language.selectedItemPosition) {
-            1 -> Locale("hi", "IN")
-            2 -> Locale("bn", "IN")
-            else -> if (voiceStyle.selectedItemPosition == 3) Locale.UK else Locale("en", "IN")
-        }
-        val result = tts?.isLanguageAvailable(locale) ?: TextToSpeech.LANG_NOT_SUPPORTED
-        if (result >= TextToSpeech.LANG_AVAILABLE) {
-            tts?.language = locale
-        } else {
-            tts?.language = Locale.ENGLISH
-            Toast.makeText(this, "That voice is not installed. Using English.", Toast.LENGTH_LONG).show()
-        }
-    }
-
     override fun onPause() {
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
