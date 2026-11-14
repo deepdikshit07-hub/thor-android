@@ -27,15 +27,24 @@ class ThorBackgroundWakeService : Service() {
     private var waitingForCommand = false
     private var stopped = false
     private var listening = false
+    private var foregroundStarted = false
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildOngoingNotification())
+        try {
+            startForeground(NOTIFICATION_ID, buildOngoingNotification())
+            foregroundStarted = true
+        } catch (error: Exception) {
+            stopped = true
+            Log.e(TAG, "Could not start the visible microphone foreground service", error)
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!foregroundStarted) return START_NOT_STICKY
         stopped = false
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED ||
             !SpeechRecognizer.isRecognitionAvailable(this)
@@ -59,6 +68,11 @@ class ThorBackgroundWakeService : Service() {
                         listening = false
                         if (stopped) return
                         Log.e(TAG, "Background recognizer error=$error")
+                        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                            stopped = true
+                            stopSelf()
+                            return
+                        }
                         scheduleRestart(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1600L else 900L)
                     }
 
@@ -164,6 +178,10 @@ class ThorBackgroundWakeService : Service() {
         try { recognizer?.cancel() } catch (_: Exception) {}
         recognizer?.destroy()
         recognizer = null
+        if (foregroundStarted) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundStarted = false
+        }
         super.onDestroy()
     }
 
