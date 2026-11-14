@@ -1,6 +1,8 @@
 package com.thor.assistant
 
 import android.content.Context
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -182,13 +184,20 @@ class ThorLiveSession(
             INPUT_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
         check(minInput > 0) { "This device does not support a 16 kHz microphone stream." }
-        val input = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            INPUT_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            maxOf(minInput, FRAME_BYTES * 4)
-        )
+        if (appContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            throw SecurityException("Microphone permission is required for THOR Live.")
+        }
+        val input = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                INPUT_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                maxOf(minInput, FRAME_BYTES * 4)
+            )
+        } catch (error: SecurityException) {
+            throw IllegalStateException("Android denied THOR access to the microphone. Check app permission and the system microphone privacy switch.", error)
+        }
         check(input.state == AudioRecord.STATE_INITIALIZED) {
             input.release()
             "Microphone could not be initialized."
