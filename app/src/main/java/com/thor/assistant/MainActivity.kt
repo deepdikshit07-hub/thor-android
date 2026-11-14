@@ -1662,12 +1662,10 @@ lower.startsWith("অ্যালার্ম ") -> {
             override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 val selected = providers[position]
                 if (selected != previousProvider) {
-                    if (modelField.text.toString().isBlank() || modelField.text.toString() == previousProvider.defaultModel) {
-                        modelField.setText(selected.defaultModel)
-                    }
-                    if (endpointField.text.toString().isBlank() || endpointField.text.toString() == previousProvider.defaultEndpoint) {
-                        endpointField.setText(selected.defaultEndpoint)
-                    }
+                    val saved = manager.settings(selected)
+                    modelField.setText(saved.model)
+                    endpointField.setText(saved.endpoint)
+                    keyField.hint = if (saved.apiKey.isNotBlank()) "API key saved securely; blank keeps it" else "Paste your API key"
                     previousProvider = selected
                 }
                 val needsKey = selected != ThorAiProviderManager.Provider.GEMINI &&
