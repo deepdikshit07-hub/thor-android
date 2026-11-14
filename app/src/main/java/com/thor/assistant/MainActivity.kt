@@ -2114,16 +2114,10 @@ private fun launchIntent(
         val available = engine.voices.orEmpty().filter {
             it.locale.language.equals(wantedLocale.language, ignoreCase = true)
         }
-        val onlineAvailable = hasValidatedInternet()
-        val preferred = if (onlineAvailable) {
-            available.filter { it.isNetworkConnectionRequired }
-                .maxByOrNull { it.quality }
-        } else {
-            available.filter { !it.isNetworkConnectionRequired }
-                .maxByOrNull { it.quality }
-        }
-        val fallback = available.maxByOrNull { it.quality }
-        val selected = preferred ?: fallback
+        // Data Saver: never prefer a network-required TTS voice.
+        val preferred = available.filter { !it.isNetworkConnectionRequired }
+            .maxByOrNull { it.quality }
+        val selected = preferred
         if (selected != null) {
             try {
                 engine.voice = selected
@@ -2139,7 +2133,7 @@ private fun launchIntent(
                 voiceStatus?.text = "Hybrid voice: Android default voice • ${error.message ?: "voice selection unavailable"}"
             }
         } else {
-            voiceStatus?.text = "Hybrid voice: no installed voice found for this language. Install voice data in Android Text-to-Speech settings."
+            voiceStatus?.text = "Data Saver: no offline voice installed for this language. Install offline voice data in Android Text-to-Speech settings."
         }
 
         when (voiceStyle.selectedItemPosition) {
