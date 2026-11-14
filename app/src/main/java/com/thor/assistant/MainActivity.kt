@@ -84,39 +84,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var bossProfile: ThorBossProfile
     private var awaitingIdentityName = false
     private var masterVerifiedThisSession = false
-    private val masterAuthStateListener = FirebaseAuth.AuthStateListener { auth ->
-        val user = auth.currentUser
-        if (user == null) {
-            masterVerifiedThisSession = false
-        } else {
-            user.getIdToken(false)
-                .addOnSuccessListener { tokenResult ->
-                    val isMaster = tokenResult.claims["thorMaster"] == true
-                    val sessionId = tokenResult.claims["thorSessionId"] as? String
-                    if (isMaster && !sessionId.isNullOrBlank()) {
-                        masterApprovalClient.saveSessionId(sessionId)
-                        mainScope.launch {
-                            val active = masterApprovalClient.checkSession()
-                            masterVerifiedThisSession = active == true
-                            when (active) {
-                                true -> addMessage("THOR", "Master Mode restored. No app timer is set; say 'I quit' to end this device session.")
-                                false -> {
-                                    masterApprovalClient.clearSessionId()
-                                    FirebaseAuth.getInstance().signOut()
-                                    addMessage("THOR", "This Master session was revoked. Request approval again.")
-                                }
-                                null -> addMessage("THOR", "Network unavailable. Your saved session is retained, but Master Mode stays locked until its status can be checked.")
-                            }
-                        }
-                    } else {
-                        masterVerifiedThisSession = false
-                    }
-                }
-                .addOnFailureListener {
-                    masterVerifiedThisSession = false
-                    addMessage("THOR", "Master Mode could not be revalidated. Connect to the internet and try again.")
-                }
-        }
+    // A cached Firebase account never silently opens Master Mode at startup.
+    // The explicit "I am Deep Dikshit" command runs the secure revalidation flow.
+    private val masterAuthStateListener = FirebaseAuth.AuthStateListener {
+        if (it.currentUser == null) masterVerifiedThisSession = false
     }
     private var bossSetupStatus: TextView? = null
     private var bossRecorder: MediaRecorder? = null
@@ -323,6 +294,8 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             isFillViewport = true
         }
 
+        var showTab: (Int) -> Unit = { }
+
         val homeBody = page()
         val homeScroll = scrollPage(homeBody)
         val homeTitle = ThorRoyalWordmarkView(this)
@@ -355,6 +328,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setPadding(dp(10), dp(13), dp(10), dp(13))
             background = premiumBackground(Color.rgb(18, 27, 39), Color.rgb(102, 145, 174))
         }
+        liveStatusText = statusPanel
         homeBody.addView(statusPanel, matchWrap())
 
         val chatEntry = makeButton("CHAT WITH THOR   ›")
@@ -492,9 +466,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val moreShortcut = makeButton("MORE")
         moreShortcut.setOnClickListener { showTab(3) }
         settingsBody.addView(moreShortcut, matchWrap())
-        val aiProviderButton = makeButton("AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title)
-        aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
-        settingsBody.addView(aiProviderButton, matchWrap())
         val testGeminiButton = makeButton("TEST ONLINE AI CONNECTION")
         testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
         settingsBody.addView(testGeminiButton, matchWrap())
@@ -599,13 +570,12 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             clipToPadding = false
         }
         val navButtons = mutableListOf<Button>()
-        fun showTab(index: Int) {
-            if (liveSession != null) stopThorLive()
+        showTab = { index ->
             pages.forEachIndexed { pageIndex, view ->
                 view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
             }
             navButtons.forEachIndexed { buttonIndex, button ->
-                val selected = buttonIndex == index
+                val selected = if (buttonIndex == 0) index == 0 else index == 4
                 button.alpha = if (selected) 1f else 0.78f
             }
         }
@@ -616,14 +586,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         navButtons.add(homeNav)
         nav.addView(homeNav, LinearLayout.LayoutParams(0, dp(58), 1f))
 
-        liveOrb = ThorLiveOrbView(this).apply {
+        val liveReactor = ThorLiveOrbView(this).apply {
             contentDescription = "Tap to start or stop THOR Live Talking"
             isClickable = true
             setOnClickListener {
                 if (liveSession == null) startThorLive() else stopThorLive()
             }
         }
-        nav.addView(liveOrb, LinearLayout.LayoutParams(dp(76), dp(76)).apply {
+        liveOrb = liveReactor
+        nav.addView(liveReactor, LinearLayout.LayoutParams(dp(76), dp(76)).apply {
             setMargins(dp(8), -dp(10), dp(8), -dp(10))
         })
 
