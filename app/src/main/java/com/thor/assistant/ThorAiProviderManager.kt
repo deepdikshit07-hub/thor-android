@@ -63,7 +63,7 @@ class ThorAiProviderManager(private val context: Context) {
             .putString("model", model.trim().ifBlank { provider.defaultModel })
             .putString("endpoint", endpoint.trim().ifBlank { provider.defaultEndpoint })
             .apply {
-                if (encrypted == null) remove("api_key") else putString("api_key", encrypted)
+                if (encrypted != null) putString("api_key", encrypted)
             }
             .apply()
     }
