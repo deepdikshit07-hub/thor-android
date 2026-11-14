@@ -1151,11 +1151,24 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private fun signInWithGoogle(onComplete: (Boolean) -> Unit) {
         val clientIdResource = resources.getIdentifier("default_web_client_id", "string", packageName)
         if (clientIdResource == 0) {
-            addMessage("THOR", "Google sign-in is not configured yet. Enable Google in Firebase Authentication, add this app's SHA fingerprints, download the updated google-services.json, and rebuild THOR.")
+            android.util.Log.e("THOR_AUTH", "Missing default_web_client_id generated from google-services.json")
+            addMessage(
+                "THOR",
+                "Google sign-in is not configured in this build. In Firebase Console, enable Google sign-in, add this app's SHA-1 and SHA-256 fingerprints, add or verify the Web application OAuth client, download the refreshed google-services.json, replace app/google-services.json, and rebuild."
+            )
             onComplete(false)
             return
         }
-        val serverClientId = getString(clientIdResource)
+        val serverClientId = getString(clientIdResource).trim()
+        if (serverClientId.isBlank() || !serverClientId.endsWith(".apps.googleusercontent.com")) {
+            android.util.Log.e("THOR_AUTH", "default_web_client_id is blank or is not a Google Web OAuth client ID")
+            addMessage(
+                "THOR",
+                "Google sign-in configuration is incomplete: the Web OAuth client ID is missing or invalid. Refresh google-services.json from Firebase after configuring the Web OAuth client."
+            )
+            onComplete(false)
+            return
+        }
         mainScope.launch {
             try {
                 val manager = CredentialManager.create(this@MainActivity)
@@ -1163,6 +1176,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     val option = GetGoogleIdOption.Builder()
                         .setServerClientId(serverClientId)
                         .setFilterByAuthorizedAccounts(authorizedOnly)
+                        .setAutoSelectEnabled(false)
                         .build()
                     return GetCredentialRequest.Builder()
                         .addCredentialOption(option)
