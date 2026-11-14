@@ -133,6 +133,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
+        intent.getStringExtra("thor_background_command")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { command ->
+                intent.removeExtra("thor_background_command")
+                mainScope.launch {
+                    delay(500L)
+                    handleCommand(command)
+                }
+            }
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
         processPendingApprovalIntent()
@@ -471,6 +480,30 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val wakeSettings = makeButton("WAKE WORD: OFF")
         wakeSettings.setOnClickListener { toggleWakeWord(wakeSettings) }
         settingsBody.addView(wakeSettings, matchWrap())
+
+        val backgroundWakePrefs = getSharedPreferences("thor_wake", MODE_PRIVATE)
+        val backgroundWakeSettings = makeButton(
+            if (backgroundWakePrefs.getBoolean("background_enabled", false)) "BACKGROUND WAKE: ON" else "BACKGROUND WAKE: OFF"
+        )
+        backgroundWakeSettings.setOnClickListener {
+            val enabled = !backgroundWakePrefs.getBoolean("background_enabled", false)
+            backgroundWakePrefs.edit().putBoolean("background_enabled", enabled).apply()
+            backgroundWakeSettings.text = if (enabled) "BACKGROUND WAKE: ON" else "BACKGROUND WAKE: OFF"
+            val message = if (enabled)
+                "Background wake is enabled. THOR will listen while this app is in the background and show a notification when it hears your command. Android may restrict microphone use or stop the service in battery-saving modes."
+            else {
+                stopService(Intent(this, ThorBackgroundWakeService::class.java))
+                "Background wake is disabled."
+            }
+            addMessage("THOR", message)
+            speak(message)
+        }
+        settingsBody.addView(backgroundWakeSettings, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Background listening uses a visible microphone notification. When THOR hears a command outside the app, tap its notification to let THOR execute it."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
         contentFrame.addView(scrollPage(settingsBody), android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
@@ -1949,7 +1982,39 @@ private fun launchIntent(
     override fun onPause() {
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
+        if (getSharedPreferences("thor_wake", MODE_PRIVATE).getBoolean("background_enabled", false) &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(Intent(this, ThorBackgroundWakeService::class.java))
+                } else {
+                    startService(Intent(this, ThorBackgroundWakeService::class.java))
+                }
+            } catch (error: Exception) {
+                android.util.Log.e("THOR_WAKE", "Could not start background wake service", error)
+            }
+        }
         super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        stopService(Intent(this, ThorBackgroundWakeService::class.java))
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra("thor_background_command")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { command ->
+                intent.removeExtra("thor_background_command")
+                mainScope.launch {
+                    delay(350L)
+                    handleCommand(command)
+                }
+            }
     }
 
     override fun onDestroy() {
