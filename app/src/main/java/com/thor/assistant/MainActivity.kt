@@ -463,6 +463,14 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
         }, matchWrap())
+        val aiProviderButton = makeButton("AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title)
+        aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
+        settingsBody.addView(aiProviderButton, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Choose an online AI provider for this device, or use local AI. API keys are encrypted with Android Keystore and stay on this phone."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
         val voicePrefs = getSharedPreferences("thor_voice", MODE_PRIVATE)
@@ -1606,7 +1614,123 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
+    private fun showAiProviderSettings(providerButton: Button) {
+        val manager = ThorAiProviderManager(this)
+        val current = manager.settings()
+        val providers = ThorAiProviderManager.Provider.values()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 4)
+        }
+        val providerSpinner = Spinner(this)
+        providerSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            providers.map { it.title }
+        )
+        providerSpinner.setSelection(providers.indexOf(current.provider).coerceAtLeast(0))
+        fun field(label: String, value: String, hint: String, password: Boolean = false): EditText {
+            panel.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(Color.rgb(45, 190, 255))
+                setPadding(0, 10, 0, 3)
+            })
+            return EditText(this).apply {
+                setSingleLine(true)
+                setText(value)
+                this.hint = hint
+                if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }.also { panel.addView(it, matchWrap()) }
+        }
+        panel.addView(TextView(this).apply { text = "AI provider"; textSize = 13f })
+        panel.addView(providerSpinner, matchWrap())
+        val modelField = field("Model name", current.model, "Enter provider model ID")
+        val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions URL")
+        val keyField = field("API key", "", "Paste your own key (blank keeps saved key)", true)
+        val help = TextView(this).apply {
+            text = "Gemini uses THOR's existing Firebase connection. Groq and OpenRouter use their standard API endpoints. For Cloudflare, enter the full account AI endpoint URL. Custom requires an OpenAI-compatible chat-completions endpoint. Free tiers have provider limits."
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 10, 0, 4)
+        }
+        panel.addView(help, matchWrap())
+        var previousProvider = current.provider
+        providerSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                val selected = providers[position]
+                if (selected != previousProvider) {
+                    if (modelField.text.toString().isBlank() || modelField.text.toString() == previousProvider.defaultModel) {
+                        modelField.setText(selected.defaultModel)
+                    }
+                    if (endpointField.text.toString().isBlank() || endpointField.text.toString() == previousProvider.defaultEndpoint) {
+                        endpointField.setText(selected.defaultEndpoint)
+                    }
+                    previousProvider = selected
+                }
+                val needsKey = selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+                keyField.isEnabled = needsKey
+                endpointField.isEnabled = selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+                modelField.isEnabled = selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("THOR AI PROVIDER")
+            .setView(panel)
+            .setPositiveButton("SAVE") { _, _ ->
+                val selected = providers[providerSpinner.selectedItemPosition]
+                manager.save(
+                    selected,
+                    modelField.text.toString(),
+                    endpointField.text.toString(),
+                    keyField.text.toString()
+                )
+                providerButton.text = "AI PROVIDER: " + selected.title
+                Toast.makeText(this, "AI provider saved for this device.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
     private fun askGemini(prompt: String) {
+        val providerManager = ThorAiProviderManager(this)
+        val selectedProvider = providerManager.settings().provider
+        if (selectedProvider == ThorAiProviderManager.Provider.LOCAL) {
+            addMessage("THOR", "Local AI selected. No online request will be made.")
+            askLocalOrFallback(prompt)
+            return
+        }
+        if (selectedProvider != ThorAiProviderManager.Provider.GEMINI) {
+            val languageInstruction = when (language.selectedItemPosition) {
+                1 -> "Reply in natural Hindi."
+                2 -> "Reply in natural Bengali."
+                else -> "Reply in clear English."
+            }
+            val compactPrompt = prompt.trim().take(2000)
+            val styleInstruction = "You are THOR, a helpful personal assistant. Be concise and useful. Match the user's language and tone."
+            val memoryContext = learningMemory.systemContext().take(1200)
+            addMessage("THOR", "Connecting to ${selectedProvider.title}...")
+            mainScope.launch {
+                try {
+                    val answer = providerManager.ask("$styleInstruction\n$languageInstruction\n$memoryContext\nUser: $compactPrompt")
+                    addMessage("THOR", answer)
+                    speak(answer)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    val detail = error.message ?: error.javaClass.simpleName
+                    android.util.Log.e("THOR_AI_PROVIDER", "Selected provider failed", error)
+                    addMessage("THOR", "${selectedProvider.title} unavailable: ${detail.take(220)} Switching to local AI.")
+                    askLocalOrFallback(prompt)
+                }
+            }
+            return
+        }
         if (!firebaseReady) {
             askLocalOrFallback(prompt)
             return
