@@ -45,13 +45,29 @@ class ThorWhisperEngine {
             result
         }
 
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     private fun ensureModel(filesDir: File, onStatus: (String) -> Unit): File {
         val directory = File(filesDir, "thor_voice")
         if (!directory.exists() && !directory.mkdirs()) throw IllegalStateException("THOR couldn't create its voice-model folder.")
         val model = File(directory, "ggml-tiny-q5_1.bin")
-        if (model.exists() && model.length() > 30_000_000L) {
-            onStatus("Offline voice model ready")
-            return model
+        if (model.exists()) {
+            if (model.length() > 30_000_000L && sha256(model) == MODEL_SHA256) {
+                onStatus("Offline voice model ready")
+                return model
+            }
+            model.delete()
         }
         onStatus("Downloading THOR voice model (about 32 MB, one time)…")
         val partial = File(directory, model.name + ".part")
@@ -93,16 +109,7 @@ class ThorWhisperEngine {
             partial.delete()
             throw IllegalStateException("The voice model download was incomplete. Please retry.")
         }
-        val digest = MessageDigest.getInstance("SHA-256")
-        partial.inputStream().buffered().use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        val actual = sha256(partial)
         if (!actual.equals(MODEL_SHA256, ignoreCase = true)) {
             partial.delete()
             throw IllegalStateException("Voice model integrity check failed. Please download it again.")
