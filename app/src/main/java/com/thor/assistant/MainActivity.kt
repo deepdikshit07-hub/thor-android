@@ -1836,7 +1836,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             true
         )
         val help = TextView(this).apply {
-            text = "Gemini uses THOR's existing Firebase connection. Groq and OpenRouter use their standard API endpoints. For Cloudflare, enter the full account AI endpoint URL. Custom requires an OpenAI-compatible chat-completions endpoint. Free tiers have provider limits."
+            text = "Firebase Gemini uses THOR's managed connection. Gemini API uses your own Google AI Studio key. OpenAI uses your own API key; API billing is separate from ChatGPT subscriptions. Groq and OpenRouter use standard endpoints. Cloudflare/custom need a full HTTPS chat-completions endpoint. Provider quotas and charges still apply."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             setPadding(0, 10, 0, 4)
