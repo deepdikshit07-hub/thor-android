@@ -294,14 +294,16 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun buildScreen() {
-        val background = Color.rgb(5, 9, 18)
-        val panel = Color.rgb(10, 19, 34)
-        val blue = Color.rgb(45, 190, 255)
-        val muted = Color.rgb(145, 170, 195)
+        val background = Color.rgb(9, 11, 16)
+        val panel = Color.rgb(22, 27, 36)
+        val blue = Color.rgb(105, 195, 255)
+        val muted = Color.rgb(153, 164, 181)
+        window.statusBarColor = background
+        window.navigationBarColor = background
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(16, 18, 16, 8)
+            setPadding(dp(14), dp(16), dp(14), dp(8))
             setBackgroundColor(background)
         }
 
@@ -312,7 +314,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
         fun page(): LinearLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(8, 8, 8, 8)
+            setPadding(dp(8), dp(8), dp(8), dp(10))
             setBackgroundColor(background)
         }
 
@@ -394,7 +396,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(Color.WHITE)
             setSingleLine(true)
             setPadding(14, 12, 14, 12)
-            setBackground(premiumBackground(panel, Color.rgb(38, 76, 108)))
+            setBackground(premiumBackground(panel, Color.rgb(58, 68, 84)))
         }
         chatBody.addView(input, matchWrap())
         val chatActions = LinearLayout(this).apply {
@@ -584,10 +586,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, 6, 0, 4)
-            setBackgroundColor(Color.rgb(8, 16, 29))
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            background = premiumBackground(Color.rgb(19, 23, 31), Color.rgb(48, 56, 69))
         }
-        val navLabels = listOf("HOME", "CHAT", "LIVE", "FEATURES", "SECURITY", "SETTINGS")
+        val navLabels = listOf("Home", "Chat", "Live", "Tools", "Shield", "Settings")
         val navButtons = mutableListOf<Button>()
         fun showTab(index: Int) {
             if (index != 2 && liveSession != null) stopThorLive()
@@ -612,24 +614,27 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             navButtons.add(button)
             nav.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
-        nav.background = premiumBackground(Color.rgb(8, 16, 29), Color.rgb(26, 58, 82))
-        nav.elevation = dp(5).toFloat()
+        nav.background = premiumBackground(Color.rgb(19, 23, 31), Color.rgb(48, 56, 69))
+        nav.elevation = dp(2).toFloat()
         root.addView(nav, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
+        ).apply { setMargins(dp(2), dp(4), dp(2), dp(4)) })
         setContentView(root)
         showTab(0)
         showStartupAnimation(contentFrame, blue, muted, background)
     }
 
-    private fun buildLivePage(): LinearLayout {
+    private fun buildLivePage(): ScrollView {
         val cyan = Color.rgb(65, 198, 255)
         val muted = Color.rgb(145, 170, 195)
         val body = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(18, 22, 18, 18)
-            setBackgroundColor(Color.rgb(5, 9, 18))
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(11, 15, 23), Color.rgb(6, 9, 15))
+            )
         }
         body.addView(TextView(this).apply {
             text = "THOR LIVE"
@@ -703,7 +708,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(muted)
             setPadding(10, 8, 10, 0)
         }, matchWrap())
-        return body
+        return ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            addView(body)
+        }
     }
 
     private fun liveServiceUrl(): String =
@@ -958,7 +967,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private fun premiumBackground(fill: Int, stroke: Int = Color.rgb(38, 88, 124)): android.graphics.drawable.Drawable {
         val drawable = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-            cornerRadius = dp(16).toFloat()
+            cornerRadius = dp(22).toFloat()
             setColor(fill)
             if (stroke != Color.TRANSPARENT) setStroke(dp(1), stroke)
         }
@@ -987,10 +996,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         setTextColor(Color.rgb(232, 245, 255))
         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
         letterSpacing = 0.025f
-        minHeight = dp(48)
-        setPadding(dp(16), dp(10), dp(16), dp(10))
-        background = premiumBackground(Color.rgb(13, 34, 54), Color.rgb(36, 91, 128))
-        elevation = dp(2).toFloat()
+        minHeight = dp(50)
+        setPadding(dp(17), dp(11), dp(17), dp(11))
+        background = premiumBackground(Color.rgb(24, 29, 38), Color.rgb(58, 68, 84))
+        elevation = dp(1).toFloat()
     }
 
     private fun installOfflineAi() {
