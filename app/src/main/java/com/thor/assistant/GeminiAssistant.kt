@@ -3,6 +3,7 @@ package com.thor.assistant
 import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.ai.type.GenerativeBackend
+import com.google.firebase.ai.type.generationConfig
 import com.google.firebase.ai.ai
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -18,7 +19,10 @@ object GeminiAssistant {
 
     private val model by lazy {
         Firebase.ai(backend = GenerativeBackend.googleAI())
-            .generativeModel("gemini-3.8-flash")
+            .generativeModel(
+                modelName = "gemini-3.8-flash",
+                generationConfig = generationConfig { maxOutputTokens = 256 }
+            )
     }
 
     suspend fun ask(prompt: String): String = withTimeout(REQUEST_TIMEOUT_MS) {
