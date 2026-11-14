@@ -87,9 +87,10 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.thor.assistant'"
 
       - name: Upload APK
+        id: upload_apk
         uses: actions/upload-artifact@v4
         with:
-          name: THOR-debug-apk
+          name: THOR-APK-DOWNLOAD
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
@@ -101,5 +102,6 @@ jobs:
           echo "## THOR APK build" >> "$GITHUB_STEP_SUMMARY"
           echo "- Size: $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
           echo "- SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Artifact: THOR-debug-apk (download from Artifacts)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Artifact: THOR-APK-DOWNLOAD" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Download link: ${{ steps.upload_apk.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
           
