@@ -14,7 +14,7 @@ being validated.
 - English, Hindi, and Bengali response selection.
 - Local notes, tasks, user-taught lessons, and reminders.
 - App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
-- Optional on-device text generation using the bundled Qwen LiteRT model.
+- Optional on-device text generation using the Qwen LiteRT model, downloaded on demand after the user chooses to install it (about 586 MB; Wi-Fi recommended). The large language model is not bundled into the APK.
 - Per-device AI Provider Manager: choose Firebase Gemini, direct Gemini API with your own key, OpenAI / ChatGPT API, Groq, OpenRouter, Cloudflare Workers AI, a custom OpenAI-compatible endpoint, or local-only AI. Each provider keeps its own model, endpoint, and encrypted API credential on that installation.
 - Experimental WeSpeaker embedding enrollment; automatic speaker identification is not enabled.
 - Remote Master Mode foundation using Cloudflare Worker/D1, Firebase Authentication, FCM, and

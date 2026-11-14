@@ -49,14 +49,6 @@ jobs:
       - name: Run Android lint and unit tests
         run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest
 
-      - name: Download bundled offline AI model
-        run: |
-          mkdir -p app/src/main/assets
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm?download=true" \
-            -o app/src/main/assets/Qwen3-0.6B.litertlm
-          test "$(stat -c%s app/src/main/assets/Qwen3-0.6B.litertlm)" -gt 100000000
-
       - name: Download WeSpeaker model and frontend assets
         run: |
           mkdir -p app/src/main/assets
@@ -73,7 +65,7 @@ jobs:
           test "$(stat -c%s app/src/main/assets/mel80_257.bin)" -eq 82240
           test "$(stat -c%s app/src/main/assets/hamming400.bin)" -eq 1600
 
-      - name: Build debug APK with bundled offline AI and speaker model
+      - name: Build compact debug APK with on-demand offline AI and speaker model
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Upload APK

@@ -2335,7 +2335,7 @@ private fun launchIntent(
         "• teach me that no cap means I am serious\n" +
         "• what have you learned / forget learning X / clear learned memory\n" +
         "• install offline AI for open-ended offline chat\n\n" +
-        "The offline language model is bundled into the APK build (~586 MB). Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
+        "The optional offline language model (~586 MB) downloads only when you choose INSTALL OFFLINE AI; it is not included in the APK. Wi-Fi is recommended. Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
         val answer = when (language.selectedItemPosition) {
