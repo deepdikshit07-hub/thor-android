@@ -9,6 +9,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -24,14 +26,25 @@ class ThorBackgroundWakeService : Service() {
     private var recognizer: SpeechRecognizer? = null
     private var waitingForCommand = false
     private var stopped = false
+    private var listening = false
+    private var foregroundStarted = false
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildOngoingNotification())
+        try {
+            startForeground(NOTIFICATION_ID, buildOngoingNotification())
+            foregroundStarted = true
+        } catch (error: Exception) {
+            stopped = true
+            Log.e(TAG, "Could not start the visible microphone foreground service", error)
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!foregroundStarted) return START_NOT_STICKY
         stopped = false
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED ||
             !SpeechRecognizer.isRecognitionAvailable(this)
@@ -52,12 +65,19 @@ class ThorBackgroundWakeService : Service() {
                     override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
                     override fun onError(error: Int) {
+                        listening = false
                         if (stopped) return
                         Log.e(TAG, "Background recognizer error=$error")
+                        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                            stopped = true
+                            stopSelf()
+                            return
+                        }
                         scheduleRestart(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1600L else 900L)
                     }
 
                     override fun onResults(results: Bundle?) {
+                        listening = false
                         if (stopped) return
                         val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull()?.trim().orEmpty()
@@ -83,8 +103,10 @@ class ThorBackgroundWakeService : Service() {
     }
 
     private fun scheduleRestart(delay: Long) {
-        android.os.Handler(mainLooper).postDelayed({
-            if (stopped || recognizer == null) return@postDelayed
+        handler.removeCallbacksAndMessages(null)
+        if (stopped || listening || recognizer == null) return
+        handler.postDelayed({
+            if (stopped || listening || recognizer == null) return@postDelayed
             try {
                 val language = getSharedPreferences("thor_voice", MODE_PRIVATE)
                     .getString("language", "en-IN") ?: "en-IN"
@@ -94,8 +116,10 @@ class ThorBackgroundWakeService : Service() {
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     // Do not require an offline speech pack; allow the installed provider to use its available path.
                 }
+                listening = true
                 recognizer?.startListening(request)
             } catch (error: Exception) {
+                listening = false
                 Log.e(TAG, "Could not restart background listening", error)
                 scheduleRestart(1800L)
             }
@@ -149,9 +173,15 @@ class ThorBackgroundWakeService : Service() {
 
     override fun onDestroy() {
         stopped = true
+        listening = false
+        handler.removeCallbacksAndMessages(null)
         try { recognizer?.cancel() } catch (_: Exception) {}
         recognizer?.destroy()
         recognizer = null
+        if (foregroundStarted) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundStarted = false
+        }
         super.onDestroy()
     }
 

@@ -158,6 +158,49 @@ async function handle(request, env) {
   }
 
   try {
+    if (request.method === "POST" && url.pathname === "/v1/live-token") {
+      if (!env.GEMINI_API_KEY) return json({ error: "Live Mode is not configured on the server." }, 503);
+      const voiceName = body.voiceName;
+      const allowedVoices = ["Charon", "Aoede", "Kore", "Puck"];
+      if (typeof voiceName !== "string" || !allowedVoices.includes(voiceName)) {
+        return json({ error: "Unsupported THOR voice selection." }, 400);
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const usage = await env.DB.prepare(
+        "INSERT INTO live_token_requests(firebase_uid,created_at) SELECT ?,? WHERE (SELECT COUNT(*) FROM live_token_requests WHERE firebase_uid=? AND created_at>?) < 12"
+      ).bind(identity.uid, now, identity.uid, now - 3600).run();
+      if (!usage?.meta?.changes) return json({ error: "Live Mode token limit reached. Try again later." }, 429);
+
+      const tokenResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/auth_tokens", {
+        method: "POST",
+        headers: {
+          "x-goog-api-key": env.GEMINI_API_KEY,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          uses: 1,
+          expireTime: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+          newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
+          liveConnectConstraints: {
+            model: "models/gemini-3.8-live",
+            config: {
+              sessionResumption: {},
+              responseModalities: ["AUDIO"],
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+              inputAudioTranscription: {},
+              outputAudioTranscription: {}
+            }
+          }
+        })
+      });
+      const tokenPayload = await tokenResponse.json().catch(() => ({}));
+      if (!tokenResponse.ok || typeof tokenPayload.name !== "string") {
+        console.error("Gemini Live token provisioning failed", tokenResponse.status);
+        return json({ error: "Gemini Live could not issue a session token. Check the server API key and Live API access." }, 502);
+      }
+      return json({ token: tokenPayload.name, expiresInSeconds: 1800 });
+    }
+
     if (request.method === "POST" && url.pathname === "/v1/devices/register") {
       const { deviceId, role, publicKeyBase64, fcmToken } = body;
       if (typeof deviceId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(deviceId) ||

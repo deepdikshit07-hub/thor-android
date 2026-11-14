@@ -32,3 +32,10 @@ CREATE TABLE IF NOT EXISTS master_sessions (
   revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS sessions_uid ON master_sessions(requester_uid, revoked_at);
+
+CREATE TABLE IF NOT EXISTS live_token_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  firebase_uid TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS live_token_uid_time ON live_token_requests(firebase_uid, created_at);
