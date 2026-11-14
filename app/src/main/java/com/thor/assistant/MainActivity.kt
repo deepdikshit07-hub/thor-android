@@ -589,7 +589,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(7), dp(7), dp(7), dp(7))
-            background = premiumBackground(Color.rgb(18, 31, 46), Color.rgb(92, 166, 207))
+            setBackground(premiumBackground(Color.rgb(18, 31, 46), Color.rgb(92, 166, 207)))
             elevation = dp(12).toFloat()
             clipToPadding = false
         }
