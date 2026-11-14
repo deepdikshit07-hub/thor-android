@@ -8,11 +8,14 @@ on:
       - main
       - thor-2.0-upgrade
       - 'experiment/**'
-      - 'feature/**'
   pull_request:
     branches:
       - main
       - 'experiment/**'
+
+concurrency:
+  group: thor-android-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
