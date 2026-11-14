@@ -2084,7 +2084,32 @@ lower.startsWith("অ্যালার্ম ") -> {
                     keyField.text.toString()
                 )
                 providerButton.text = "AI PROVIDER: " + selected.title
-                Toast.makeText(this, "AI provider saved for this device.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "AI provider saved. Checking the connection...", Toast.LENGTH_LONG).show()
+                if (selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+                ) {
+                    // Verify the saved endpoint and credential immediately with a tiny request.
+                    // This avoids reporting "saved" as if the API key were already proven valid.
+                    mainScope.launch {
+                        try {
+                            val reply = withContext(Dispatchers.IO) {
+                                manager.ask("Reply with exactly: OK", 64)
+                            }
+                            if (!isFinishing && !isDestroyed) {
+                                addMessage("THOR", "${selected.title} connection verified. API key and model are responding.")
+                                Toast.makeText(this@MainActivity, "API connection verified successfully.", Toast.LENGTH_LONG).show()
+                            }
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            if (!isFinishing && !isDestroyed) {
+                                val detail = (error.message ?: error.javaClass.simpleName).take(220)
+                                addMessage("THOR", "${selected.title} connection test failed: $detail")
+                                Toast.makeText(this@MainActivity, "API test failed: $detail", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
             }
             .setNeutralButton("REMOVE SAVED KEY") { _, _ ->
                 val selected = providers[providerSpinner.selectedItemPosition]
