@@ -938,7 +938,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun premiumBackground(fill: Int, stroke: Int = Color.rgb(38, 88, 124)): android.graphics.drawable.Drawable {
-        val shape = android.graphics.drawable.GradientDrawable().apply {
+        val drawable = android.graphics.drawable.GradientDrawable().apply {
             shape = android.graphics.drawable.GradientDrawable.RECTANGLE
             cornerRadius = dp(16).toFloat()
             setColor(fill)
@@ -946,13 +946,13 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }
         return android.graphics.drawable.RippleDrawable(
             android.content.res.ColorStateList.valueOf(Color.argb(42, 120, 210, 255)),
-            shape,
+            drawable,
             null
         )
     }
 
     private fun creatorEmblemView(): TextView = TextView(this).apply {
-        text = "DEVELOPED & ENGINEERED BY\\nARITRA ADHIKARY  •  DEEP DIKSHIT"
+        text = "DEVELOPED & ENGINEERED BY\nARITRA ADHIKARY  •  DEEP DIKSHIT"
         textSize = 10f
         gravity = Gravity.CENTER
         letterSpacing = 0.08f
