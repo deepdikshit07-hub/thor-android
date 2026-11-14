@@ -1232,7 +1232,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                 }
                 voiceStatus?.text = "Offline voice ready"
                 handleCommand(spoken)
-            } catch (error: Exception) {
+            } catch (error: Throwable) {
                 android.util.Log.e("THOR_MIC", "Offline speech recognition failed", error)
                 addMessage("THOR", error.message ?: "Offline voice recognition failed. Please try again.")
             } finally {
@@ -2305,13 +2305,13 @@ private fun launchIntent(
     override fun onPause() {
         val liveWasActive = liveSession != null
         if (liveWasActive) stopThorLive()
+        if (voiceBusy) voiceEngine?.cancelCapture()
         wakeButton?.text = "WAKE: OFF"
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
-        stopService(Intent(this, ThorBackgroundWakeService::class.java))
     }
 
     override fun onDestroy() {
