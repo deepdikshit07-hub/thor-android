@@ -715,69 +715,29 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun liveServiceUrl(): String =
-        getSharedPreferences("thor_live_service", MODE_PRIVATE).getString("worker_url", "").orEmpty().trim()
-
-    private fun showLiveServiceSetupDialog() {
-        val endpoint = EditText(this).apply {
-            hint = "https://your-thor-worker.workers.dev"
-            setSingleLine(true)
-            setText(liveServiceUrl())
-        }
-        AlertDialog.Builder(this)
-            .setTitle("THOR Live Service Setup")
-            .setMessage("Enter the HTTPS Cloudflare Worker URL used for temporary Gemini Live access. This setting is separate from Master Mode.")
-            .setView(endpoint)
-            .setPositiveButton("SAVE & START") { _, _ ->
-                val value = endpoint.text.toString().trim().trimEnd('/')
-                val uri = runCatching { java.net.URI(value) }.getOrNull()
-                val valid = value.length < 300 &&
-                    uri != null &&
-                    uri.scheme.equals("https", ignoreCase = true) &&
-                    uri.host?.endsWith(".workers.dev", ignoreCase = true) == true &&
-                    uri.userInfo == null &&
-                    uri.port in -1..443 &&
-                    uri.rawQuery == null &&
-                    uri.rawFragment == null &&
-                    uri.path.orEmpty().trimEnd('/').isEmpty()
-                if (!valid) {
-                    addMessage("THOR", "Enter a valid HTTPS Cloudflare workers.dev URL without a path.")
-                    return@setPositiveButton
-                }
-                getSharedPreferences("thor_live_service", MODE_PRIVATE)
-                    .edit().putString("worker_url", value).apply()
-                startThorLive()
-            }
-            .setNegativeButton("CANCEL", null)
-            .show()
-    }
-
     private fun startThorLive() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1006)
             return
         }
-        if (liveServiceUrl().isBlank()) {
-            showLiveServiceSetupDialog()
+        // Reuse the one Gemini key saved in AI Provider settings; Live Mode has no
+        // separate Worker URL or Firebase sign-in setup.
+        val apiKey = ThorAiProviderManager(this)
+            .settings(ThorAiProviderManager.Provider.GEMINI_API).apiKey
+        if (apiKey.isBlank()) {
+            liveStatusText?.text = "GEMINI API KEY REQUIRED"
+            liveCaptionText?.text = "Add your Gemini API key in Settings → AI Provider, choose Google Gemini (own API key), and save."
+            Toast.makeText(
+                this,
+                "Add your Gemini API key in Settings → AI Provider. The same saved key powers chat and Live Mode.",
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
-        val auth = FirebaseAuth.getInstance()
-        if (auth.currentUser == null) {
-            liveStatusText?.text = "SIGNING IN SECURELY"
-            auth.signInAnonymously()
-                .addOnSuccessListener { beginThorLiveSession() }
-                .addOnFailureListener { error ->
-                    val message = "Live Mode needs Firebase Authentication. Enable Anonymous sign-in in Firebase Console, or sign in through Master Mode. " +
-                        (error.localizedMessage ?: "")
-                    liveStatusText?.text = "SIGN-IN REQUIRED"
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-                }
-        } else {
-            beginThorLiveSession()
-        }
+        beginThorLiveSession(apiKey)
     }
 
-    private fun beginThorLiveSession() {
+    private fun beginThorLiveSession(apiKey: String) {
         if (liveSession != null || isFinishing || isDestroyed) return
         if (isBackgroundWakeEnabled()) stopBackgroundWakeService()
         val voiceName = when (voiceStyle.selectedItemPosition) {
@@ -821,7 +781,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         liveStatusText?.text = "SECURING LIVE CONNECTION"
         mainScope.launch {
             try {
-                session.start(liveServiceUrl(), voiceName, languageName)
+                session.start(apiKey, voiceName, languageName)
             } catch (error: Exception) {
                 if (liveSession === session) liveSession = null
                 liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
@@ -2199,7 +2159,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             true
         )
         val help = TextView(this).apply {
-            text = "Firebase Gemini uses THOR's managed connection. Gemini API uses your own Google AI Studio key. OpenAI uses your own API key; API billing is separate from ChatGPT subscriptions. Groq and OpenRouter use standard endpoints. Cloudflare/custom need a full HTTPS chat-completions endpoint. Provider quotas and charges still apply."
+            text = "Firebase Gemini uses THOR's managed connection. Your saved Google Gemini API key is shared by Gemini chat and Live Mode, so Live Mode needs no separate Worker URL or Firebase sign-in. OpenAI uses your own API key; API billing is separate from ChatGPT subscriptions. Groq and OpenRouter use standard endpoints. Cloudflare/custom need a full HTTPS chat-completions endpoint. Provider quotas and charges still apply."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             setPadding(0, 10, 0, 4)
