@@ -477,7 +477,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
         settingsBody.addView(aiProviderButton, matchWrap())
         settingsBody.addView(TextView(this).apply {
-            text = "Choose an online AI provider for this device, or use local AI. API keys are encrypted with Android Keystore and stay on this phone."
+            text = "Choose Gemini, OpenAI / ChatGPT, Groq, OpenRouter, Cloudflare, a compatible custom API, or on-device AI. API keys are encrypted on this phone."
             textSize = 12f
             setTextColor(muted)
         }, matchWrap())
@@ -1832,7 +1832,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         val keyField = field(
             "API key",
             "",
-            if (current.apiKey.isNotBlank()) "API key saved securely; blank keeps it" else "Paste your own key",
+            if (current.apiKey.isNotBlank()) "Key saved encrypted; blank keeps it" else "Paste your own key",
             true
         )
         val help = TextView(this).apply {
@@ -1876,6 +1876,11 @@ lower.startsWith("অ্যালার্ম ") -> {
                 )
                 providerButton.text = "AI PROVIDER: " + selected.title
                 Toast.makeText(this, "AI provider saved for this device.", Toast.LENGTH_LONG).show()
+            }
+            .setNeutralButton("REMOVE SAVED KEY") { _, _ ->
+                val selected = providers[providerSpinner.selectedItemPosition]
+                manager.clearKey(selected)
+                Toast.makeText(this, "Saved API key removed from this device.", Toast.LENGTH_LONG).show()
             }
             .setNegativeButton("CANCEL", null)
             .show()
