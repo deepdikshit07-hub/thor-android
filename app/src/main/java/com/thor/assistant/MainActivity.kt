@@ -653,6 +653,16 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             (300 * resources.displayMetrics.density).toInt()
         ).apply { setMargins(0, 14, 0, 10) })
 
+        // Keep the premium creator emblem visible throughout the Arc Reactor / Live page.
+        body.addView(creatorEmblemView().apply {
+            textSize = 9.5f
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            elevation = dp(4).toFloat()
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(12), dp(2), dp(12), dp(12)) })
+
         val status = TextView(this).apply {
             text = "READY FOR A LIVE CONVERSATION"
             textSize = 12f
