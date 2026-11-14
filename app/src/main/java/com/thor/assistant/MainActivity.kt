@@ -488,7 +488,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         val aiProviderButton = makeButton("AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title)
         aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
         settingsBody.addView(aiProviderButton, matchWrap())
-        val testGeminiButton = makeButton("CHECK GEMINI CONNECTION")
+        val testGeminiButton = makeButton("TEST ONLINE AI CONNECTION")
         testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
         settingsBody.addView(testGeminiButton, matchWrap())
         settingsBody.addView(TextView(this).apply {
@@ -2265,19 +2265,46 @@ lower.startsWith("অ্যালার্ম ") -> {
     }
 
     private fun checkGeminiConnection(button: Button) {
-        if (!firebaseReady) {
-            addMessage("THOR", "Firebase is not initialized: ${firebaseInitError ?: "unknown setup error"}. Check the Firebase app configuration first.")
+        val manager = ThorAiProviderManager(this)
+        val selected = manager.settings().provider
+        if (selected == ThorAiProviderManager.Provider.LOCAL) {
+            addMessage("THOR", "On-device AI is selected. Choose an online provider to test a network connection.")
             return
         }
         button.isEnabled = false
-        button.text = "CHECKING GEMINI..."
+        button.text = "TESTING ONLINE AI..."
+        if (selected != ThorAiProviderManager.Provider.GEMINI) {
+            addMessage("THOR", "Testing the selected online provider with a small live request. Your API key stays encrypted on this device.")
+            mainScope.launch {
+                try {
+                    val reply = manager.ask("Reply with exactly: THOR connection verified.", 64)
+                    addMessage("THOR", "${selected.title} connection verified. The API key, endpoint, and model returned a response: ${reply.take(90)}")
+                    Toast.makeText(this@MainActivity, "Online AI connection verified.", Toast.LENGTH_LONG).show()
+                } catch (error: Exception) {
+                    android.util.Log.e("THOR_AI_PROVIDER", "Manual online provider test failed", error)
+                    addMessage("THOR", "${selected.title} test failed: ${error.message ?: error.javaClass.simpleName}")
+                } finally {
+                    if (!isFinishing && !isDestroyed) {
+                        button.isEnabled = true
+                        button.text = "TEST ONLINE AI CONNECTION"
+                    }
+                }
+            }
+            return
+        }
+        if (!firebaseReady) {
+            addMessage("THOR", "Firebase is not initialized. Check the Firebase app configuration first.")
+            button.isEnabled = true
+            button.text = "TEST ONLINE AI CONNECTION"
+            return
+        }
         addMessage("THOR", "Checking Firebase App Check and sending a small Gemini test request...")
         Firebase.appCheck.getAppCheckToken(false)
             .addOnSuccessListener {
                 mainScope.launch {
                     try {
                         val reply = GeminiAssistant.ask("Reply with exactly: THOR connection verified.")
-                        addMessage("THOR", "Gemini connection verified. App Check token was obtained and the model replied: ${reply.take(100)}")
+                        addMessage("THOR", "Firebase Gemini connection verified. App Check token was obtained and the model replied: ${reply.take(100)}")
                         Toast.makeText(this@MainActivity, "Gemini connection verified.", Toast.LENGTH_LONG).show()
                     } catch (error: Exception) {
                         android.util.Log.e("THOR_GEMINI", "Manual Gemini connection test failed", error)
@@ -2285,7 +2312,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     } finally {
                         if (!isFinishing && !isDestroyed) {
                             button.isEnabled = true
-                            button.text = "CHECK GEMINI CONNECTION"
+                            button.text = "TEST ONLINE AI CONNECTION"
                         }
                     }
                 }
@@ -2294,10 +2321,9 @@ lower.startsWith("অ্যালার্ম ") -> {
                 android.util.Log.e("THOR_APPCHECK", "App Check token request failed", error)
                 addMessage("THOR", "Firebase App Check could not issue a token: ${error.localizedMessage ?: error.javaClass.simpleName}. Check App Check provider setup for this build.")
                 button.isEnabled = true
-                button.text = "CHECK GEMINI CONNECTION"
+                button.text = "TEST ONLINE AI CONNECTION"
             }
     }
-
     private fun askGemini(prompt: String) {
         val providerManager = ThorAiProviderManager(this)
         val selectedProvider = providerManager.settings().provider
@@ -2326,7 +2352,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 } catch (error: Exception) {
                     val detail = error.message ?: error.javaClass.simpleName
                     android.util.Log.e("THOR_AI_PROVIDER", "Selected provider failed", error)
-                    addMessage("THOR", "${selectedProvider.title} unavailable: ${detail.take(220)} Switching to local AI.")
+                    addMessage("THOR", "${selectedProvider.title} request failed: ${detail.take(220)}. Switching to local AI as a backup.")
                     askLocalOrFallback(prompt)
                 }
             }
