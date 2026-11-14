@@ -57,6 +57,9 @@ class ThorRoyalWordmarkView(context: Context) : View(context) {
 
         val size = min(48f * density, w / 5.8f)
         textPaint.textSize = size
+        outlinePaint.textSize = size
+        outlinePaint.typeface = textPaint.typeface
+        outlinePaint.textAlign = Paint.Align.CENTER
         val letters = "THOR"
         val gap = size * 0.035f
         val widths = letters.map { textPaint.measureText(it.toString()) }
