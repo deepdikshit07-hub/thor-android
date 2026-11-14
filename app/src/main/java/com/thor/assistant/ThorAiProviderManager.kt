@@ -7,6 +7,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.SocketTimeoutException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -162,8 +163,57 @@ class ThorAiProviderManager(private val context: Context) {
     }
 
 
+    /**
+     * Gemini 3.8 Flash can occasionally be overloaded on the public API.
+     * Give generation a realistic response window, then retry transient
+     * overload/timeouts once on the stable 3.6 Flash fallback.
+     */
     private fun askGeminiApi(config: Settings, prompt: String, maxTokens: Int): String {
-        val endpoint = config.endpoint.trim().replace("{model}", config.model)
+        try {
+            return requestGeminiApi(config, prompt, maxTokens, config.model)
+        } catch (primaryError: Exception) {
+            if (!isTransientGeminiFailure(primaryError) || config.model == "gemini-3.6-flash") {
+                throw primaryError
+            }
+            val fallbackModel = if (config.model == "gemini-3.8-flash") "gemini-3.6-flash" else null
+            if (fallbackModel == null) throw primaryError
+            Log.w("THOR_AI_PROVIDER", "${config.model} temporarily unavailable; retrying with $fallbackModel", primaryError)
+            return try {
+                requestGeminiApi(config, prompt, maxTokens, fallbackModel)
+            } catch (fallbackError: Exception) {
+                Log.e("THOR_AI_PROVIDER", "Gemini primary and fallback requests both failed", fallbackError)
+                throw IllegalStateException(
+                    "Gemini is temporarily unavailable. ${config.model} and $fallbackModel both failed. " +
+                        "Primary: ${primaryError.message ?: primaryError.javaClass.simpleName}. " +
+                        "Fallback: ${fallbackError.message ?: fallbackError.javaClass.simpleName}. " +
+                        "Check the connection and try again shortly.",
+                    fallbackError
+                )
+            }
+        }
+    }
+
+    private fun isTransientGeminiFailure(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is SocketTimeoutException) return true
+            if (current is GeminiTransientException) return true
+            current = current.cause
+        }
+        return false
+    }
+
+    private class GeminiTransientException(message: String) : java.io.IOException(message)
+
+    private fun requestGeminiApi(
+        config: Settings,
+        prompt: String,
+        maxTokens: Int,
+        requestModel: String
+    ): String {
+        val endpoint = config.endpoint.trim()
+            .replace("{model}", requestModel)
+            .replace(config.model, requestModel)
         require(endpoint.startsWith("https://", ignoreCase = true)) { "Gemini endpoint must use HTTPS." }
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject()
@@ -172,8 +222,8 @@ class ThorAiProviderManager(private val context: Context) {
             .put("generationConfig", JSONObject().put("maxOutputTokens", maxTokens.coerceIn(64, 512)))
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 12_000
-            readTimeout = 25_000
+            connectTimeout = 15_000
+            readTimeout = 60_000
             doOutput = true
             setRequestProperty("x-goog-api-key", config.apiKey)
             setRequestProperty("Content-Type", "application/json")
@@ -187,14 +237,18 @@ class ThorAiProviderManager(private val context: Context) {
             if (status !in 200..299) {
                 val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }
                     .getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
+                if (status in listOf(500, 502, 503, 504)) {
+                    throw GeminiTransientException("Gemini temporarily returned HTTP $status ($detail).")
+                }
                 if (status == 429) {
                     prefs.edit()
                         .putLong("cooldown_until_${config.provider.name}", System.currentTimeMillis() + 60L * 60L * 1000L)
                         .apply()
                 }
                 throw IllegalStateException(when (status) {
+                    400 -> "Gemini rejected the request ($detail). Check the model and request settings."
                     401, 403 -> "Gemini rejected the API key or permissions ($detail)."
-                    404 -> "Gemini model '${config.model}' is unavailable to this API project. Choose a currently supported model such as gemini-3.8-flash. ($detail)"
+                    404 -> "Gemini model '$requestModel' is unavailable to this API project. ($detail)"
                     429 -> "Gemini API quota/rate limit reached. A one-hour cooldown is now active. ($detail)"
                     else -> "Gemini API request failed: $detail"
                 })
@@ -204,7 +258,7 @@ class ThorAiProviderManager(private val context: Context) {
             val answer = buildString {
                 if (parts != null) for (i in 0 until parts.length()) {
                     val value = parts.optJSONObject(i)?.optString("text").orEmpty()
-                    if (value.isNotBlank()) { if (isNotEmpty()) append('\n'); append(value) }
+                    if (value.isNotBlank()) { if (isNotEmpty()) append('\\n'); append(value) }
                 }
             }
             return answer.takeIf { it.isNotBlank() } ?: error("Gemini returned no text. Check the selected model and key permissions.")
