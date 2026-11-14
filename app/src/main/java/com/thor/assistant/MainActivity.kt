@@ -1055,6 +1055,15 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
 
+            lower.trim().trimEnd('!', '.', '?', ',') in listOf(
+                "hi", "hello", "hey", "hey thor", "yo", "sup",
+                "হাই", "হ্যালো", "নমস্কার", "नमस्ते", "हेलो"
+            ) -> respond(
+                "Good day. THOR is online. How may I assist you?",
+                "नमस्ते। THOR तैयार है। मैं आपकी क्या सहायता कर सकता हूँ?",
+                "নমস্কার। THOR প্রস্তুত। কীভাবে সাহায্য করতে পারি?"
+            )
+
             lower.startsWith("ask ") || lower.startsWith("chat ") -> {
                 val prompt = command.substringAfter(' ').trim()
                 if (prompt.isNotBlank()) askGemini(prompt)
@@ -1430,7 +1439,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
         val styleInstruction = "Automatically match the user's language and level of informality in every reply. If the user writes in casual English, internet slang, Bengali colloquial language, or Bengali-English mix, reply naturally in that same casual register and language. Understand common everyday slang and informal spellings; do not lecture the user about slang or unnecessarily correct it. Use slang naturally rather than forcing it into every sentence. Keep replies clear and avoid hateful slurs or targeted harassment."
         android.util.Log.i("THOR_GEMINI", "Gemini request started")
-        addMessage("THOR", "Thinking... (up to 60 seconds)")
+        addMessage("THOR", "Connecting to online AI...")
         mainScope.launch {
             try {
                 val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n${learningMemory.systemContext()}\nUser: $prompt")
