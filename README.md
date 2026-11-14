@@ -15,7 +15,7 @@ being validated.
 - Local notes, tasks, user-taught lessons, and reminders.
 - App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
 - Optional on-device text generation using the bundled Qwen LiteRT model.
-- Per-device AI Provider Manager: choose Firebase Gemini, Groq, OpenRouter, Cloudflare Workers AI, a custom OpenAI-compatible endpoint, or local-only AI. Each provider keeps its own model, endpoint, and encrypted API credential on that installation.
+- Per-device AI Provider Manager: choose Firebase Gemini, direct Gemini API with your own key, OpenAI / ChatGPT API, Groq, OpenRouter, Cloudflare Workers AI, a custom OpenAI-compatible endpoint, or local-only AI. Each provider keeps its own model, endpoint, and encrypted API credential on that installation.
 - Experimental WeSpeaker embedding enrollment; automatic speaker identification is not enabled.
 - Remote Master Mode foundation using Cloudflare Worker/D1, Firebase Authentication, FCM, and
   Device A biometric signing.
@@ -46,7 +46,7 @@ Live Mode uses network data continuously while active and may incur Gemini API u
 
 ## AI provider setup
 
-Open **Settings → AI Provider** to select the provider for that installation. Gemini uses the existing Firebase AI Logic integration. Other hosted providers require the user's own API key, model ID, and (where applicable) HTTPS chat-completions endpoint. Groq and OpenRouter have preset endpoints; Cloudflare Workers AI requires the account-specific endpoint. The generic adapter supports OpenAI-compatible chat-completions APIs only.
+Open **Settings → AI Provider** to select the provider for that installation. Firebase Gemini uses THOR's managed Firebase AI Logic connection. Direct Gemini API accepts a Google AI Studio key; OpenAI / ChatGPT API accepts an OpenAI API key; Groq and OpenRouter have preset endpoints; Cloudflare Workers AI requires the account-specific endpoint; and Custom accepts an OpenAI-compatible chat-completions API. Each provider has its own model and key slot. Users can replace or remove saved keys in the app. Keys are encrypted at rest with Android Keystore AES-GCM and remain on that installation. API usage is billed separately from consumer subscriptions (for example, ChatGPT Plus does not include OpenAI API credits). Free tiers, quotas, and terms are controlled by each provider. A normal model API key does not automatically enable live web search or guarantee current affairs are up to date; that requires a provider's search/grounding feature or a separate search integration. Selecting Local-only keeps THOR's AI prompts on-device.
 
 Credentials are encrypted at rest using an Android Keystore AES-GCM key. Android backup is disabled for this app. Credentials are not embedded in the APK or shared between devices. Never paste API keys into chat, source control, screenshots, or issue reports. A provider's free tier, rate limits, model names, and availability are controlled by that provider and can change. A 429 response triggers a one-hour per-provider cooldown and THOR falls back to local AI. This is a client-side BYOK design; a production multi-user service should proxy requests through a trusted backend rather than distribute a shared secret.
 
