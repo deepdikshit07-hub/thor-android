@@ -26,6 +26,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -1446,6 +1448,12 @@ lower.startsWith("অ্যালার্ম ") -> {
                 android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
                 addMessage("THOR", answer)
                 speak(answer)
+            } catch (error: TimeoutCancellationException) {
+                android.util.Log.w("THOR_GEMINI", "Gemini timed out; switching to on-device AI", error)
+                addMessage("THOR", "Online AI took too long. Switching to the on-device AI.")
+                askLocalOrFallback(prompt)
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
                 val detail = error.message ?: error.javaClass.simpleName
