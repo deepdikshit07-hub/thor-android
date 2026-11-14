@@ -89,7 +89,12 @@ class ThorLiveSession(
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     val setup = JSONObject()
                         .put("model", LIVE_MODEL)
-                        .put("generationConfig", JSONObject().put("responseModalities", org.json.JSONArray().put("AUDIO")))
+                        .put("generationConfig", JSONObject()
+                            .put("responseModalities", org.json.JSONArray().put("AUDIO"))
+                            .put("speechConfig", JSONObject().put("voiceConfig", JSONObject().put("prebuiltVoiceConfig", JSONObject().put("voiceName", voiceName)))))
+                        .put("sessionResumption", JSONObject())
+                        .put("inputAudioTranscription", JSONObject())
+                        .put("outputAudioTranscription", JSONObject())
                         .put("systemInstruction", JSONObject().put("parts", org.json.JSONArray().put(
                             JSONObject().put("text",
                                 "You are THOR, a calm, capable, natural voice assistant. Speak conversationally, warmly and concisely. " +
