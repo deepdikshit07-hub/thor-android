@@ -76,11 +76,18 @@ jobs:
       - name: Build debug APK with bundled offline AI and speaker model
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Validate APK artifact
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.thor.assistant'"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: THOR-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
           

@@ -154,18 +154,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
         processPendingApprovalIntent()
+        // Keep app startup fast and memory use predictable. Load the large local model only
+        // when the user selects Offline AI or explicitly asks for an offline response.
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
-            offlineAiButton?.text = "LOADING OFFLINE AI..."
-            mainScope.launch {
-                try {
-                    offlineAi.initialize()
-                    offlineAiButton?.text = "OFFLINE AI READY"
-                    addMessage("THOR", "Offline AI loaded. I can now chat without internet.")
-                } catch (error: Exception) {
-                    offlineAiButton?.text = "RETRY OFFLINE AI"
-                    addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
-                }
-            }
+            offlineAiButton?.text = "LOAD OFFLINE AI"
         }
     }
 
