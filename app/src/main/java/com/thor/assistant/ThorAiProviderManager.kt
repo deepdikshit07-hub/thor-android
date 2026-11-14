@@ -194,7 +194,7 @@ class ThorAiProviderManager(private val context: Context) {
                 }
                 throw IllegalStateException(when (status) {
                     401, 403 -> "Gemini rejected the API key or permissions ($detail)."
-                    404 -> "Gemini model ' + config.model + ' is unavailable to this API project. Choose a currently supported model such as gemini-3.8-flash. ($detail)"
+                    404 -> "Gemini model '${config.model}' is unavailable to this API project. Choose a currently supported model such as gemini-3.8-flash. ($detail)"
                     429 -> "Gemini API quota/rate limit reached. A one-hour cooldown is now active. ($detail)"
                     else -> "Gemini API request failed: $detail"
                 })
