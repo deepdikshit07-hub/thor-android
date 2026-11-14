@@ -349,11 +349,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
         ).apply { setMargins(dp(18), dp(2), dp(18), dp(8)) })
 
-        val homeWake = makeButton("WAKE WORD: OFF")
-        homeWake.setOnClickListener { toggleWakeWord(homeWake) }
-        wakeButton = homeWake
-        wakeButtons += homeWake
-        homeBody.addView(homeWake, matchWrap())
         contentFrame.addView(homeScroll, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
@@ -403,7 +398,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         ))
         val featuresBody = page()
         featuresBody.addView(TextView(this).apply {
-            text = "FEATURES"
+            text = "TOOLS"
             textSize = 22f
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
@@ -437,7 +432,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
         val securityBody = page()
         securityBody.addView(TextView(this).apply {
-            text = "PRIVACY & SECURITY"
+            text = "MORE"
             textSize = 22f
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
@@ -541,6 +536,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         settingsBody.addView(systemVoiceSettings, matchWrap())
         val wakeSettings = makeButton("WAKE WORD: OFF")
         wakeSettings.setOnClickListener { toggleWakeWord(wakeSettings) }
+        wakeButton = wakeSettings
         wakeButtons += wakeSettings
         settingsBody.addView(wakeSettings, matchWrap())
 
@@ -2690,9 +2686,7 @@ private fun launchIntent(
         val sessionLabel = if (session.isBlank()) "No saved session" else "Session ID stored (••••${session.takeLast(4)})"
         val workerLabel = if (masterApprovalClient.baseUrl.isBlank()) "Not configured" else "HTTPS endpoint configured"
         val report = listOf(
-            "Master Mode: ${if (masterVerifiedThisSession) "verified on this app session" else "not verified"}",
             "Remote approval service: $workerLabel",
-            "Saved Master session: $sessionLabel",
             "Device A approval key: ${if (approvalKey) "present in Android Keystore" else "not present on this device"}",
             "Microphone permission: ${if (audio) "granted" else "not granted"}",
             "Notifications: ${if (notifications) "allowed or not required" else "not allowed"}",
@@ -2701,7 +2695,6 @@ private fun launchIntent(
         ).joinToString("\n\n")
         securityAudit.record("Privacy and Security Centre opened")
         val options = arrayOf(
-            "Review / revoke Master Mode sessions",
             "View security activity",
             "Open Android app permissions",
             "Close"
@@ -2711,9 +2704,8 @@ private fun launchIntent(
             .setMessage(report)
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> showActiveMasterSessions()
-                    1 -> showSecurityActivity()
-                    2 -> {
+                    0 -> showSecurityActivity()
+                    1 -> {
                         securityAudit.record("Android app permission settings opened")
                         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
                         launchIntent(intent, "Opening Android's THOR permission settings.")
