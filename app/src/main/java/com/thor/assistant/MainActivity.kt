@@ -60,6 +60,7 @@ import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Switch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Calendar
@@ -77,6 +78,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private var liveStatusText: TextView? = null
     private var liveCaptionText: TextView? = null
     private var liveToggleButton: Button? = null
+    private var liveChatEnabled = true
     private var voiceStatus: TextView? = null
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
@@ -662,6 +664,24 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         liveStatusText = status
         body.addView(status, matchWrap())
 
+        val liveChatToggle = Switch(this).apply {
+            text = "SHOW LIVE CHAT"
+            textSize = 12f
+            setTextColor(Color.rgb(220, 230, 240))
+            isChecked = liveChatEnabled
+            setOnCheckedChangeListener { _, enabled ->
+                liveChatEnabled = enabled
+                liveCaptionText?.visibility = if (enabled) View.VISIBLE else View.GONE
+                if (enabled && liveSession != null) {
+                    liveCaptionText?.text = "Live captions enabled. New conversation text will appear here."
+                }
+            }
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        body.addView(liveChatToggle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(12), dp(8), dp(12), dp(2)) })
+
         val caption = TextView(this).apply {
             text = "Your conversation stays temporary and is cleared when the session ends."
             textSize = 13f
@@ -671,6 +691,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setPadding(12, 10, 12, 14)
         }
         liveCaptionText = caption
+        caption.visibility = if (liveChatEnabled) View.VISIBLE else View.GONE
         body.addView(caption, matchWrap())
 
         val toggle = makeButton("START LIVE SESSION").apply {
@@ -753,7 +774,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
             override fun onTranscript(speaker: String, text: String) {
                 // Only the latest caption is rendered; no transcript list or database writes.
-                liveCaptionText?.text = "$speaker  •  $text"
+                if (liveChatEnabled) liveCaptionText?.text = "$speaker  •  $text"
             }
 
             override fun onError(message: String) {
