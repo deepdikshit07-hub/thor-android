@@ -487,6 +487,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         )
         backgroundWakeSettings.setOnClickListener {
             val enabled = !backgroundWakePrefs.getBoolean("background_enabled", false)
+            if (enabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                backgroundWakePrefs.edit().putBoolean("background_enabled", true).apply()
+                backgroundWakeSettings.text = "BACKGROUND WAKE: ON"
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1002)
+            }
             backgroundWakePrefs.edit().putBoolean("background_enabled", enabled).apply()
             backgroundWakeSettings.text = if (enabled) "BACKGROUND WAKE: ON" else "BACKGROUND WAKE: OFF"
             val message = if (enabled)
