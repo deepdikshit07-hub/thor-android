@@ -610,6 +610,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             textSize = 14f
             setTextColor(ivory)
         }
+        input = EditText(this)
+        offlineAiButton = makeButton("Install offline AI")
         setContentView(root)
     }
 
