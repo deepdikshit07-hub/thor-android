@@ -27,6 +27,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    androidResources {
+        // The bundled ~586 MB model is already compressed; storing it as-is makes builds,
+        // installs and the first-launch copy noticeably faster.
+        noCompress.add("litertlm")
+    }
 
     buildTypes {
         release {

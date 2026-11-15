@@ -21,6 +21,11 @@ object GeminiAssistant {
             .generativeModel("gemini-3.8-flash")
     }
 
+    /** Creates the Gemini client ahead of time; safe to call from any thread. */
+    fun warmUp() {
+        Log.d(TAG, "Gemini client ready: ${model.javaClass.simpleName}")
+    }
+
     suspend fun ask(prompt: String): String = withTimeout(REQUEST_TIMEOUT_MS) {
         var lastError: Exception? = null
 

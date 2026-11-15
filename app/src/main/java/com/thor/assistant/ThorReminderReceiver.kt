@@ -66,6 +66,8 @@ class ThorReminderReceiver : BroadcastReceiver() {
                 val message = item.optString("text", "THOR reminder")
                 if (at <= now) {
                     showNotification(context, id, message)
+                    // Delivered now, so forget it; otherwise it would fire again on every reboot.
+                    removeSaved(context, id)
                 } else {
                     val alarmIntent = Intent(context, ThorReminderReceiver::class.java).apply {
                         action = ACTION_REMIND
