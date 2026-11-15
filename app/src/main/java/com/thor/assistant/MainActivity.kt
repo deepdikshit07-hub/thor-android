@@ -438,7 +438,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(dp(12), dp(9), dp(12), dp(9))
             background = glassDrawable(0xCC153A39.toInt(), 0x6659DDBA, 22f)
         }
-        header.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        header.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            rightMargin = dp(6)
+        })
+        val featuresButton = makeButton("FEATURES")
+        featuresButton.setOnClickListener { showFeaturesDialog() }
+        header.addView(featuresButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
         root.addView(header, matchWrap())
 
         val hero = LinearLayout(this).apply {
