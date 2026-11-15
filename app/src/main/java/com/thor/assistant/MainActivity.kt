@@ -138,6 +138,22 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        val pendingPath = getSharedPreferences("thor_ota", MODE_PRIVATE)
+            .getString("pending_install_path", null) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
+            val pendingApk = java.io.File(pendingPath)
+            if (pendingApk.isFile && pendingApk.length() > 0L) {
+                updateManager.install(pendingApk)
+            } else {
+                getSharedPreferences("thor_ota", MODE_PRIVATE).edit()
+                    .remove("pending_install_path").apply()
+                addMessage("THOR", "The downloaded update was not found. Please check for updates again.")
+            }
+        }
+    }
+
     private fun checkForUpdates(silent: Boolean) {
         mainScope.launch {
             try {
