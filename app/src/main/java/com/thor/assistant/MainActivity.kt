@@ -1628,7 +1628,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             text = "SIGN IN / GET API ACCESS"
             isAllCaps = false
             setTextColor(Color.WHITE)
-            background = glassDrawable(0xFF292A30.toInt(), 0x88D7B879, 18f)
+            background = glassDrawable(0xFF292A30.toInt(), 0x88D7B879.toInt(), 18f)
         }
         panel.addView(signInButton, matchWrap())
         panel.addView(TextView(this).apply {
