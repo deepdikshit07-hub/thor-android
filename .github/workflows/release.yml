@@ -2,8 +2,9 @@ name: Publish THOR OTA Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -58,10 +59,12 @@ jobs:
         id: build
         shell: bash
         run: |
-          VERSION_NAME="${GITHUB_REF_NAME#v}"
-          VERSION_CODE="$((1000 + GITHUB_RUN_NUMBER))"
+          VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
+          VERSION_CODE="$((100000 + GITHUB_RUN_NUMBER))"
+          TAG_NAME="v${VERSION_NAME}"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           gradle --no-daemon :app:assembleRelease \
             -PthorVersionCode="$VERSION_CODE" \
             -PthorVersionName="$VERSION_NAME" \
@@ -72,7 +75,8 @@ jobs:
           mkdir -p release-assets
           cp app/build/outputs/apk/release/app-release.apk release-assets/thor-release.apk
           SHA256="$(sha256sum release-assets/thor-release.apk | awk '{print $1}')"
-          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/thor-release.apk"
+          TAG_NAME="v${VERSION_NAME}"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/thor-release.apk"
           export VERSION_NAME VERSION_CODE SHA256 APK_URL
           python3 - <<'PY'
           import json, os
@@ -91,7 +95,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.build.outputs.tag_name }}
           name: THOR ${{ steps.build.outputs.version_name }}
           generate_release_notes: true
           files: |
