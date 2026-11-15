@@ -154,6 +154,8 @@ class ThorUpdateManager(private val activity: Activity) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !activity.packageManager.canRequestPackageInstalls()
         ) {
+            activity.getSharedPreferences("thor_ota", Activity.MODE_PRIVATE)
+                .edit().putString("pending_install_path", apkFile.absolutePath).apply()
             val settingsIntent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:${activity.packageName}")
@@ -167,6 +169,8 @@ class ThorUpdateManager(private val activity: Activity) {
             return false
         }
 
+        activity.getSharedPreferences("thor_ota", Activity.MODE_PRIVATE)
+            .edit().remove("pending_install_path").apply()
         val contentUri = FileProvider.getUriForFile(
             activity,
             "${activity.packageName}.fileprovider",
