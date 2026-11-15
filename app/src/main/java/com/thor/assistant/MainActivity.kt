@@ -22,6 +22,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -86,6 +91,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
         updateManager = ThorUpdateManager(this)
+        schedulePeriodicUpdateChecks()
+        requestUpdateNotificationPermission()
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
@@ -106,6 +113,28 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
                 }
             }
+        }
+    }
+
+    private fun schedulePeriodicUpdateChecks() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val request = PeriodicWorkRequestBuilder<ThorUpdateCheckWorker>(6, java.util.concurrent.TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "thor-ota-periodic-check",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+
+    private fun requestUpdateNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
         }
     }
 
