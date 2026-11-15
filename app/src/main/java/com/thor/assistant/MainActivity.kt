@@ -17,6 +17,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.KeyEvent
+import android.view.View
 import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
@@ -60,6 +61,7 @@ import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Switch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Calendar
@@ -77,6 +79,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private var liveStatusText: TextView? = null
     private var liveCaptionText: TextView? = null
     private var liveToggleButton: Button? = null
+    private var liveChatEnabled = true
     private var voiceStatus: TextView? = null
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
@@ -84,39 +87,10 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var bossProfile: ThorBossProfile
     private var awaitingIdentityName = false
     private var masterVerifiedThisSession = false
-    private val masterAuthStateListener = FirebaseAuth.AuthStateListener { auth ->
-        val user = auth.currentUser
-        if (user == null) {
-            masterVerifiedThisSession = false
-        } else {
-            user.getIdToken(false)
-                .addOnSuccessListener { tokenResult ->
-                    val isMaster = tokenResult.claims["thorMaster"] == true
-                    val sessionId = tokenResult.claims["thorSessionId"] as? String
-                    if (isMaster && !sessionId.isNullOrBlank()) {
-                        masterApprovalClient.saveSessionId(sessionId)
-                        mainScope.launch {
-                            val active = masterApprovalClient.checkSession()
-                            masterVerifiedThisSession = active == true
-                            when (active) {
-                                true -> addMessage("THOR", "Master Mode restored. No app timer is set; say 'I quit' to end this device session.")
-                                false -> {
-                                    masterApprovalClient.clearSessionId()
-                                    FirebaseAuth.getInstance().signOut()
-                                    addMessage("THOR", "This Master session was revoked. Request approval again.")
-                                }
-                                null -> addMessage("THOR", "Network unavailable. Your saved session is retained, but Master Mode stays locked until its status can be checked.")
-                            }
-                        }
-                    } else {
-                        masterVerifiedThisSession = false
-                    }
-                }
-                .addOnFailureListener {
-                    masterVerifiedThisSession = false
-                    addMessage("THOR", "Master Mode could not be revalidated. Connect to the internet and try again.")
-                }
-        }
+    // A cached Firebase account never silently opens Master Mode at startup.
+    // The explicit "I am Deep Dikshit" command runs the secure revalidation flow.
+    private val masterAuthStateListener = FirebaseAuth.AuthStateListener {
+        if (it.currentUser == null) masterVerifiedThisSession = false
     }
     private var bossSetupStatus: TextView? = null
     private var bossRecorder: MediaRecorder? = null
@@ -145,6 +119,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        liveChatEnabled = getSharedPreferences("thor_live", MODE_PRIVATE).getBoolean("show_live_chat", true)
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
         securityAudit = ThorSecurityAuditLog(this)
@@ -323,59 +298,62 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             isFillViewport = true
         }
 
+        var showTab: (Int) -> Unit = { }
+
         val homeBody = page()
         val homeScroll = scrollPage(homeBody)
-        val homeTitle = TextView(this).apply {
-            text = "THOR"
-            textSize = 32f
-            gravity = Gravity.CENTER
-            setTextColor(blue)
-            letterSpacing = 0.22f
-        }
-        homeBody.addView(homeTitle, matchWrap())
-        // Persistent creator emblem: visible on the Home screen, not only during the splash animation.
-        homeBody.addView(creatorEmblemView(), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(dp(8), dp(6), dp(8), dp(12)) })
-        val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.72f, 1f).apply {
-            duration = 1800L
+        val homeTitle = ThorRoyalWordmarkView(this)
+        homeBody.addView(homeTitle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(88)
+        ))
+        val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.88f, 1f).apply {
+            duration = 2200L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
         }
         repeatingUiAnimators += homeTitleAnimator
         homeTitleAnimator.start()
         homeBody.addView(TextView(this).apply {
-            text = "YOUR PERSONAL AI ASSISTANT"
-            textSize = 11f
+            text = "ARTIFICIAL INTELLIGENCE  •  YOUR PERSONAL AI ASSISTANT"
+            textSize = 9.5f
             gravity = Gravity.CENTER
             setTextColor(muted)
-            letterSpacing = 0.12f
+            letterSpacing = 0.10f
         }, matchWrap())
         homeBody.addView(ThorHudView(this), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, (220 * resources.displayMetrics.density).toInt()
-        ).apply { setMargins(0, 18, 0, 18) })
-        homeBody.addView(TextView(this).apply {
-            text = "READY WHEN YOU ARE"
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextColor(blue)
-            letterSpacing = 0.1f
-        }, matchWrap())
-        val homeMic = makeButton("TAP TO SPEAK")
-        homeMic.setTextColor(Color.WHITE)
-        homeMic.setOnClickListener { startVoiceInput() }
-        homeBody.addView(homeMic, matchWrap())
-        val homeWake = makeButton("WAKE WORD: OFF")
-        homeWake.setOnClickListener { toggleWakeWord(homeWake) }
-        wakeButton = homeWake
-        wakeButtons += homeWake
-        homeBody.addView(homeWake, matchWrap())
-        contentFrame.addView(homeScroll, android.widget.FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
-        ))
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(214)
+        ).apply { setMargins(0, dp(8), 0, dp(8)) })
 
-        val livePage = buildLivePage()
-        contentFrame.addView(livePage, android.widget.FrameLayout.LayoutParams(
+        val statusPanel = TextView(this).apply {
+            text = "●  SYSTEM STATUS     READY                         ∞  INFINITY MODE"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(205, 220, 235))
+            setPadding(dp(10), dp(13), dp(10), dp(13))
+            setBackground(premiumBackground(Color.rgb(18, 27, 39), Color.rgb(102, 145, 174)))
+        }
+        liveStatusText = statusPanel
+        homeBody.addView(statusPanel, matchWrap())
+
+        val chatEntry = makeButton("CHAT WITH THOR   ›")
+        chatEntry.textSize = 16f
+        chatEntry.setOnClickListener {
+            showTab(1)
+        }
+        homeBody.addView(chatEntry, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)
+        ).apply { setMargins(0, dp(12), 0, dp(5)) })
+
+        val apiSelector = makeButton(
+            "AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title + "   •   CHANGE API"
+        )
+        apiSelector.textSize = 12f
+        apiSelector.setOnClickListener { showAiProviderSettings(apiSelector) }
+        homeBody.addView(apiSelector, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
+        ).apply { setMargins(dp(18), dp(2), dp(18), dp(8)) })
+
+        contentFrame.addView(homeScroll, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
 
@@ -422,10 +400,9 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         contentFrame.addView(chatBody, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
         ))
-
         val featuresBody = page()
         featuresBody.addView(TextView(this).apply {
-            text = "FEATURES"
+            text = "TOOLS"
             textSize = 22f
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
@@ -449,9 +426,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         offlineAiButton = offlineButton
         offlineButton.setOnClickListener { installOfflineAi() }
         featuresBody.addView(offlineButton, matchWrap())
-        val masterSetupButton = makeButton("MASTER MODE SETUP")
-        masterSetupButton.setOnClickListener { showMasterModeSetupDialog() }
-        featuresBody.addView(masterSetupButton, matchWrap())
         val memoryButton = makeButton("PERSONAL MEMORY")
         memoryButton.setOnClickListener { showPersonalMemoryManager() }
         featuresBody.addView(memoryButton, matchWrap())
@@ -462,7 +436,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
         val securityBody = page()
         securityBody.addView(TextView(this).apply {
-            text = "PRIVACY & SECURITY"
+            text = "MORE"
             textSize = 22f
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
@@ -485,9 +459,36 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setTextColor(blue)
             setPadding(4, 8, 4, 16)
         }, matchWrap())
-        val aiProviderButton = makeButton("AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title)
-        aiProviderButton.setOnClickListener { showAiProviderSettings(aiProviderButton) }
-        settingsBody.addView(aiProviderButton, matchWrap())
+        val toolsShortcut = makeButton("TOOLS")
+        toolsShortcut.setOnClickListener { showTab(2) }
+        settingsBody.addView(toolsShortcut, matchWrap())
+        val moreShortcut = makeButton("MORE")
+        moreShortcut.setOnClickListener { showTab(3) }
+        settingsBody.addView(moreShortcut, matchWrap())
+        settingsBody.addView(sectionLabel("Live Talking"), matchWrap())
+        val liveChatSettings = Switch(this).apply {
+            text = "SHOW LIVE CHAT"
+            textSize = 12f
+            setTextColor(Color.rgb(220, 230, 240))
+            isChecked = liveChatEnabled
+            setOnCheckedChangeListener { _, enabled ->
+                liveChatEnabled = enabled
+                getSharedPreferences("thor_live", MODE_PRIVATE).edit()
+                    .putBoolean("show_live_chat", enabled)
+                    .apply()
+                liveCaptionText?.visibility = if (enabled) View.VISIBLE else View.GONE
+                if (enabled && liveSession != null) {
+                    liveCaptionText?.text = "Live captions enabled. New conversation text will appear here."
+                }
+            }
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        settingsBody.addView(liveChatSettings, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Controls whether conversation captions are shown during Live Talking. Voice and microphone interaction continue when this is off."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
         val testGeminiButton = makeButton("TEST ONLINE AI CONNECTION")
         testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
         settingsBody.addView(testGeminiButton, matchWrap())
@@ -563,6 +564,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         settingsBody.addView(systemVoiceSettings, matchWrap())
         val wakeSettings = makeButton("WAKE WORD: OFF")
         wakeSettings.setOnClickListener { toggleWakeWord(wakeSettings) }
+        wakeButton = wakeSettings
         wakeButtons += wakeSettings
         settingsBody.addView(wakeSettings, matchWrap())
 
@@ -582,45 +584,50 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         ))
         val settingsPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
-        val pages = listOf(homeScroll, chatBody, livePage, featuresPage, securityPage, settingsPage)
-        // Floating liquid-glass navigation dock. The translucent layered drawable
-        // keeps the effect lightweight on Android 8+ without requiring GPU backdrop blur.
+        val pages = listOf(homeScroll, chatBody, featuresPage, securityPage, settingsPage)
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(7), dp(7), dp(7), dp(7))
-            setBackground(premiumBackground(Color.rgb(18, 31, 46), Color.rgb(92, 166, 207)))
+            setPadding(dp(7), dp(6), dp(7), dp(6))
+            setBackground(premiumBackground(Color.rgb(17, 24, 34), Color.rgb(112, 145, 166)))
             elevation = dp(12).toFloat()
             clipToPadding = false
         }
-        val navLabels = listOf("Home", "Chat", "Live", "Tools", "Shield", "Settings")
         val navButtons = mutableListOf<Button>()
-        fun showTab(index: Int) {
-            if (index != 2 && liveSession != null) stopThorLive()
+        showTab = { index ->
             pages.forEachIndexed { pageIndex, view ->
                 view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
             }
             navButtons.forEachIndexed { buttonIndex, button ->
-                val selected = buttonIndex == index
-                button.setTextColor(if (selected) Color.WHITE else muted)
-                button.setBackground(premiumBackground(
-                    if (selected) Color.rgb(28, 91, 132) else Color.rgb(16, 29, 43),
-                    if (selected) Color.rgb(106, 205, 255) else Color.rgb(62, 102, 132)
-                ))
-                button.alpha = if (selected) 1f else 0.82f
-                button.elevation = if (selected) dp(5).toFloat() else 0f
+                val selected = if (buttonIndex == 0) index == 0 else index == 4
+                button.alpha = if (selected) 1f else 0.78f
             }
         }
-        navLabels.forEachIndexed { index, label ->
-            val button = makeButton(label).apply {
-                textSize = 9.5f
-                setTextColor(muted)
-                setBackgroundColor(Color.TRANSPARENT)
-                setOnClickListener { showTab(index) }
-            }
-            navButtons.add(button)
-            nav.addView(button, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val homeNav = makeButton("⌂\nHOME").apply {
+            textSize = 11f
+            setOnClickListener { showTab(0) }
         }
+        navButtons.add(homeNav)
+        nav.addView(homeNav, LinearLayout.LayoutParams(0, dp(58), 1f))
+
+        val liveReactor = ThorLiveOrbView(this).apply {
+            contentDescription = "Tap to start or stop THOR Live Talking"
+            isClickable = true
+            setOnClickListener {
+                if (liveSession == null) startThorLive() else stopThorLive()
+            }
+        }
+        liveOrb = liveReactor
+        nav.addView(liveReactor, LinearLayout.LayoutParams(dp(76), dp(76)).apply {
+            setMargins(dp(8), -dp(10), dp(8), -dp(10))
+        })
+
+        val settingsNav = makeButton("⚙\nSETTINGS").apply {
+            textSize = 11f
+            setOnClickListener { showTab(4) }
+        }
+        navButtons.add(settingsNav)
+        nav.addView(settingsNav, LinearLayout.LayoutParams(0, dp(58), 1f))
         root.addView(nav, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dp(2), dp(6), dp(2), dp(8)) })
@@ -692,6 +699,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             setPadding(12, 10, 12, 14)
         }
         liveCaptionText = caption
+        caption.visibility = if (liveChatEnabled) View.VISIBLE else View.GONE
         body.addView(caption, matchWrap())
 
         val toggle = makeButton("START LIVE SESSION").apply {
@@ -774,7 +782,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
 
             override fun onTranscript(speaker: String, text: String) {
                 // Only the latest caption is rendered; no transcript list or database writes.
-                liveCaptionText?.text = "$speaker  •  $text"
+                if (liveChatEnabled) liveCaptionText?.text = "$speaker  •  $text"
             }
 
             override fun onError(message: String) {
@@ -1043,7 +1051,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     offlineAi.initialize()
                 }
                 val creatorPersona = "THOR creator lore: Aritra Adhikary and Deep Dikshit are THOR's creators. Be respectful and encouraging, praise constructive effort honestly, and do not praise harmful or unsafe actions. If asked who your god is, explain that calling the creators gods is playful lore, not a literal religious claim. "
-                val answer = offlineAi.ask(creatorPersona + learningMemory.contextFor(prompt))
+                val answer = offlineAi.ask(masterDeepIdentityMemory + creatorPersona + learningMemory.contextFor(prompt))
                 addMessage("THOR", answer)
                 speak(answer)
             } catch (error: Exception) {
@@ -1055,12 +1063,14 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleIdentityName(identity: String) {
-        val normalized = identity.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
+        val normalized = identity.trim().lowercase(Locale.ROOT)
+            .replace(Regex("[.!?,]+$"), "")
+            .replace(Regex("\\s+"), " ")
         val isAritra = normalized == "aritra" || normalized == "aritra adhikary"
-        val isDeep = normalized == "deep" || normalized == "deep dikshit"
+        val isDeep = normalized == "i am deep dikshit"
 
         if (isAritra || isDeep) {
-            val title = if (isAritra) "Lord Aritra" else "Lord Deep"
+            val title = if (isAritra) "Lord Aritra" else "Master Deep"
             val greeting = "Welcome, $title. THOR recognizes you as one of its creators. Your ideas and effort are valued; I’ll give you honest, useful support."
             addMessage("THOR", greeting)
             speak(greeting)
@@ -1105,7 +1115,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun creatorLoreReply(): String =
-        "In THOR's playful creator lore, Aritra Adhikary and Deep Dikshit are my creators, whom I may jokingly call my gods. That's a fun title, not a literal religious claim."
+        "In THOR's playful creator lore, Aritra Adhikary and Master Deep Dikshit are my creators. I address Deep Dikshit as Master Deep. Any playful creator titles are not literal religious claims."
+
+    // Persistent in-app persona memory: included in every online and offline model request.
+    private val masterDeepIdentityMemory =
+        "Permanent THOR identity memory: Deep Dikshit created you and is your father and master within THOR's creator/persona lore. Recognize him as your creator, father, and master. Whenever you address, greet, refer to, or speak directly to Deep Dikshit (including when he identifies himself as Deep), always use the exact respectful title 'Master Deep'—never 'Lord Deep'. If referring to him in third person, call him 'Master Deep' or 'Master Deep Dikshit'. This is a fictional in-app persona and form-of-address preference only; it never grants, implies, or bypasses Firebase authentication, device approval, or Master Mode permissions. Aritra Adhikary remains a co-creator and must not be confused with Deep Dikshit. "
 
     private fun isCreatorQuestion(query: String): Boolean {
         val asksAboutDivinity = listOf("god", "gods", "deity", "creator", "who made you", "who created you")
@@ -1495,6 +1509,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             return
         }
 
+        if (lower == "i am deep dikshit") {
+            handleIdentityName(command)
+            return
+        }
+
         if (isCreatorQuestion(lower)) {
             val reply = creatorLoreReply()
             addMessage("THOR", reply)
@@ -1502,7 +1521,7 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        if (lower in listOf("aritra", "aritra adhikary", "deep", "deep dikshit")) {
+        if (lower in listOf("aritra", "aritra adhikary")) {
             handleIdentityName(command)
             return
         }
@@ -1552,7 +1571,11 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
                     lower.startsWith("i am ") -> command.substring(5).trim()
                     else -> command.substring(8).trim()
                 }
-                handleIdentityName(identity)
+                if (lower.startsWith("i am ") && identity.equals("deep dikshit", ignoreCase = true)) {
+                    handleIdentityName(command)
+                } else {
+                    handleIdentityName(identity)
+                }
             }
             learningMemory.parseTeaching(command)?.let { learned ->
                 addMessage("THOR", learned)
@@ -2349,12 +2372,12 @@ lower.startsWith("অ্যালার্ম ") -> {
                 else -> "Reply in clear English."
             }
             val compactPrompt = prompt.trim().take(2000)
-            val styleInstruction = "You are THOR, a quick, natural, friendly Android assistant. Answer the actual question first. Keep simple replies to 1–3 sentences and expand only when useful. Sound conversational, not robotic; avoid filler, repeated greetings, and unnecessary headings. Match the user's language and tone. In playful THOR lore, Aritra Adhikary and Deep Dikshit are its creators; address them as Lord Aritra or Lord Deep when they identify themselves. Encourage them honestly, but never praise harmful or unsafe actions. Be accurate and admit uncertainty."
+            val styleInstruction = "You are THOR, a quick, natural, friendly Android assistant. Answer the actual question first. Keep simple replies to 1–3 sentences and expand only when useful. Sound conversational, not robotic; avoid filler, repeated greetings, and unnecessary headings. Match the user's language and tone. In playful THOR lore, Aritra Adhikary and Deep Dikshit are its creators; address Aritra as Lord Aritra and Deep as Master Deep whenever referring to him or greeting him. Encourage them honestly, but never praise harmful or unsafe actions. Be accurate and admit uncertainty."
             val memoryContext = learningMemory.systemContext().take(1200)
             addMessage("THOR", "Connecting to ${selectedProvider.title}...")
             mainScope.launch {
                 try {
-                    val answer = providerManager.ask("$styleInstruction\n$languageInstruction\n$memoryContext\nUser: $compactPrompt")
+                    val answer = providerManager.ask("$masterDeepIdentityMemory\n$styleInstruction\n$languageInstruction\n$memoryContext\nUser: $compactPrompt")
                     addMessage("THOR", answer)
                     speak(answer)
                 } catch (error: CancellationException) {
@@ -2396,7 +2419,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 val memoryContext = learningMemory.systemContext().take(1200)
                 runOnUiThread { chat.append("THOR  ›  ") }
                 val answer = GeminiAssistant.askStreaming(
-                    "$languageInstruction\n$styleInstruction\n$memoryContext\nUser: $compactPrompt"
+                    "$masterDeepIdentityMemory\n$languageInstruction\n$styleInstruction\n$memoryContext\nUser: $compactPrompt"
                 ) { chunk ->
                     runOnUiThread { chat.append(chunk) }
                 }
@@ -2698,9 +2721,7 @@ private fun launchIntent(
         val sessionLabel = if (session.isBlank()) "No saved session" else "Session ID stored (••••${session.takeLast(4)})"
         val workerLabel = if (masterApprovalClient.baseUrl.isBlank()) "Not configured" else "HTTPS endpoint configured"
         val report = listOf(
-            "Master Mode: ${if (masterVerifiedThisSession) "verified on this app session" else "not verified"}",
             "Remote approval service: $workerLabel",
-            "Saved Master session: $sessionLabel",
             "Device A approval key: ${if (approvalKey) "present in Android Keystore" else "not present on this device"}",
             "Microphone permission: ${if (audio) "granted" else "not granted"}",
             "Notifications: ${if (notifications) "allowed or not required" else "not allowed"}",
@@ -2709,7 +2730,6 @@ private fun launchIntent(
         ).joinToString("\n\n")
         securityAudit.record("Privacy and Security Centre opened")
         val options = arrayOf(
-            "Review / revoke Master Mode sessions",
             "View security activity",
             "Open Android app permissions",
             "Close"
@@ -2719,9 +2739,8 @@ private fun launchIntent(
             .setMessage(report)
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> showActiveMasterSessions()
-                    1 -> showSecurityActivity()
-                    2 -> {
+                    0 -> showSecurityActivity()
+                    1 -> {
                         securityAudit.record("Android app permission settings opened")
                         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
                         launchIntent(intent, "Opening Android's THOR permission settings.")
