@@ -26,7 +26,7 @@ The project is designed to be edited on a phone and built by GitHub Actions.
 2. Upload the contents of this folder, keeping the same directory structure.
 3. Open the repository's Actions tab and enable Actions if asked.
 4. Select **Build THOR APK** and press **Run workflow**, or push a commit to `main`.
-5. Open the successful workflow run, scroll to **Artifacts**, and download `THOR-debug-apk`.
+5. Open the successful workflow run, scroll to **Artifacts**, and download `THOR-debug-apk` for development/testing only. Debug artifacts are runner-signed and are not suitable for production OTA upgrades.
 6. Extract the ZIP and install `app-debug.apk` on your Android phone.
 
 ## Termux editing setup
@@ -79,9 +79,9 @@ Before publishing the first OTA release:
 3. Confirm that the release keystore certificate matches the certificate on currently installed THOR builds.
 4. Only after the signing identity is confirmed and the PR is approved, merge it into `main`. The release workflow then builds and publishes a uniquely versioned OTA release automatically.
 
-The current debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
+The release workflow also uploads the signed production APK and `latest.json` to that run's **Artifacts** section for 90 days. Distribute the signed release APK from the `Publish THOR OTA Release` workflow—not the debug APK. The debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
 
-The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release.
+The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release. Workflow builds use the repository-wide GitHub run ID as their version code so later workflow APKs have a higher version code.
 
 ## Device notes
 - `minSdk 23` supports older Android releases; the app should run on Android 10/11 and newer.
