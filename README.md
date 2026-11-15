@@ -75,5 +75,5 @@ Never paste a password or access token into chat or commit it into the project.
 - Text-to-Speech voice availability depends on installed Android TTS voice data.
 - This starter does not read private files, messages, call logs, or notifications. It does not have unrestricted phone access.
 - Calling opens the dialer; SMS opens the compose screen. You review and confirm those actions yourself.
-- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
+- The offline AI model (~586 MB) is downloaded separately on demand after installation and stored in THOR's private app storage. It is not bundled into each APK update, so routine app updates stay much smaller. Each device downloads the model once unless its app data is cleared.\n- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
 - Do not place API keys, passwords, or tokens in source code or GitHub commits.
