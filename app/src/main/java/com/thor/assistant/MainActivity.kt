@@ -632,18 +632,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             item.addView(TextView(this).apply {
                 text = glyph
-                textSize = 23f
+                textSize = 28f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(if (label == "Home") gold else Color.rgb(218, 216, 210))
+                setTextColor(if (label == "Home") gold else Color.rgb(238, 235, 228))
             }, matchWrap())
             item.addView(TextView(this).apply {
                 text = label
-                textSize = 10f
+                textSize = 11f
                 gravity = Gravity.CENTER
-                setTextColor(if (label == "Home") ivory else Color.rgb(190, 188, 182))
+                setTextColor(if (label == "Home") ivory else Color.rgb(211, 207, 198))
             }, matchWrap())
-            nav.addView(item, LinearLayout.LayoutParams(0, dp(54), 1f))
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(60), 1f))
         }
         navItem("Home", "⌂") { }
         navItem("Chat", "◉") { showChatDialog() }
@@ -797,10 +797,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         val ivory = Color.rgb(245, 242, 235)
         val muted = Color.rgb(190, 188, 182)
-        dialog.findViewById<TextView>(android.R.id.alertTitle)?.apply {
-            setTextColor(ivory)
-            textSize = 19f
-            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        val titleId = resources.getIdentifier("alertTitle", "id", "android")
+        if (titleId != 0) {
+            dialog.findViewById<TextView>(titleId)?.apply {
+                setTextColor(ivory)
+                textSize = 19f
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            }
         }
         dialog.findViewById<TextView>(android.R.id.message)?.apply {
             setTextColor(muted)
