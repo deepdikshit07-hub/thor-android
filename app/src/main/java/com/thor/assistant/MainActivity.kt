@@ -198,7 +198,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(Color.LTGRAY)
         }, matchWrap())
         val languageChoice = Spinner(this)
-        languageChoice.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, languages)
+        languageChoice.adapter = premiumSpinnerAdapter(languages)
+        languageChoice.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
         languageChoice.setSelection(getSharedPreferences("thor_preferences", MODE_PRIVATE).getInt("language", 0).coerceIn(0, languages.lastIndex))
         panel.addView(languageChoice, matchWrap())
         panel.addView(TextView(this).apply {
@@ -207,7 +208,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(Color.LTGRAY)
         }, matchWrap())
         val voiceChoice = Spinner(this)
-        voiceChoice.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
+        voiceChoice.adapter = premiumSpinnerAdapter(voiceStyles)
+        voiceChoice.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
         voiceChoice.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
         panel.addView(voiceChoice, matchWrap())
         AlertDialog.Builder(this)
@@ -896,6 +898,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setBackgroundColor(Color.TRANSPARENT)
         }
         window.setLayout((resources.displayMetrics.widthPixels * 0.91f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun premiumSpinnerAdapter(options: List<String>): ArrayAdapter<String> {
+        return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, options) {
+            private fun row(position: Int, convertView: android.view.View?, dropdown: Boolean): TextView {
+                val view = (convertView as? TextView) ?: TextView(this@MainActivity)
+                view.text = getItem(position).orEmpty()
+                view.textSize = 14f
+                view.setTextColor(if (dropdown) Color.rgb(245, 242, 235) else Color.rgb(230, 225, 215))
+                view.setPadding(dp(14), dp(if (dropdown) 12 else 10), dp(14), dp(if (dropdown) 12 else 10))
+                view.gravity = Gravity.CENTER_VERTICAL
+                view.setBackgroundColor(if (dropdown) Color.rgb(29, 30, 34) else Color.TRANSPARENT)
+                return view
+            }
+
+            override fun getView(position: Int, convertView: android.view.View?, parent: ViewGroup): android.view.View =
+                row(position, convertView, false)
+
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: ViewGroup): android.view.View =
+                row(position, convertView, true)
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
