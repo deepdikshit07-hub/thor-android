@@ -174,7 +174,7 @@ class ThorAiProviderManager(private val context: Context) {
                 .put("temperature", 0.7).put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt.take(12000))))
         }
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"; connectTimeout = 10000; readTimeout = 45000; doOutput = true
+            requestMethod = "POST"; connectTimeout = 10000; readTimeout = 18000; doOutput = true
             setRequestProperty("Content-Type", "application/json"); setRequestProperty("Accept", "text/event-stream")
             if (provider == Provider.CLAUDE) { setRequestProperty("x-api-key", config.apiKey); setRequestProperty("anthropic-version", "2023-06-01") }
             else setRequestProperty("Authorization", "Bearer " + config.apiKey)
@@ -210,7 +210,7 @@ class ThorAiProviderManager(private val context: Context) {
     data class StreamAnswer(val provider: Provider, val text: String)
 
     suspend fun streamAutomatically(prompt: String, geminiFirebase: suspend ((String) -> Unit) -> String, onChunk: (String) -> Unit): StreamAnswer {
-        val candidates = buildList { add(Provider.GEMINI); add(Provider.GROQ); add(Provider.GEMINI_API); if (allowMeteredAutoProviders()) { add(Provider.CLAUDE); add(Provider.OPENAI) } }
+        val candidates = buildList { add(Provider.GEMINI); add(Provider.GROQ); if (allowMeteredAutoProviders()) { add(Provider.CLAUDE); add(Provider.OPENAI) } }
         val failures = mutableListOf<String>()
         for (provider in candidates) {
             if (provider != Provider.GEMINI && settings(provider).apiKey.isBlank()) continue
