@@ -98,9 +98,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (!isFinishing && !isDestroyed) checkForUpdates(silent = true)
-        }, 12_000L)
+        if (intent?.getBooleanExtra("thor_open_update_prompt", false) == true) {
+            Handler(Looper.getMainLooper()).post { checkForUpdates(silent = false) }
+        } else {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) checkForUpdates(silent = true)
+            }, 12_000L)
+        }
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
@@ -135,6 +139,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("thor_open_update_prompt", false)) {
+            checkForUpdates(silent = false)
         }
     }
 
