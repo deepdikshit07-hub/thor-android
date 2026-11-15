@@ -26,11 +26,14 @@ import kotlinx.coroutines.delay
  */
 class ThorAiProviderManager(private val context: Context) {
     enum class Provider(val title: String, val defaultModel: String, val defaultEndpoint: String) {
-        GEMINI("Google Gemini (Firebase)", "gemini-3.8-flash", ""),
-        GEMINI_API("Google Gemini (own API key)", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
-        OPENAI("OpenAI / ChatGPT API", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions"),
+        GEMINI("Google Gemini (THOR connection)", "gemini-3.8-flash", ""),
+        GEMINI_API("Google Gemini API", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
+        OPENAI("ChatGPT / OpenAI API", "gpt-6-luna", "https://api.openai.com/v1/responses"),
+        ANTHROPIC("Claude (Anthropic API)", "claude-sonnet-5-5", "https://api.anthropic.com/v1/messages"),
         GROQ("Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions"),
-        OPENROUTER("OpenRouter", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
+        OPENROUTER("OpenRouter (many model providers)", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
+        DEEPSEEK("DeepSeek API", "deepseek-chat", "https://api.deepseek.com/chat/completions"),
+        MISTRAL("Mistral AI", "mistral-small-latest", "https://api.mistral.ai/v1/chat/completions"),
         CLOUDFLARE("Cloudflare Workers AI", "@cf/meta/llama-3.1-8b-instruct", ""),
         CUSTOM("Custom OpenAI-compatible API", "", ""),
         LOCAL("On-device AI only", "", "")
@@ -64,10 +67,14 @@ class ThorAiProviderManager(private val context: Context) {
         } else {
             savedModel ?: provider.defaultModel
         }
+        val savedEndpoint = prefs.getString("endpoint_$suffix", null)
+        val endpoint = if (provider == Provider.OPENAI &&
+            savedEndpoint == "https://api.openai.com/v1/chat/completions"
+        ) provider.defaultEndpoint else (savedEndpoint ?: provider.defaultEndpoint)
         return Settings(
             provider,
             model,
-            prefs.getString("endpoint_$suffix", provider.defaultEndpoint) ?: provider.defaultEndpoint,
+            endpoint,
             decrypt(prefs.getString("api_key_$suffix", null))
         )
     }
@@ -102,6 +109,12 @@ class ThorAiProviderManager(private val context: Context) {
         require(config.model.isNotBlank()) { "Enter a model name." }
         if (config.provider == Provider.GEMINI_API) {
             return@withContext askGeminiApi(config, prompt, maxTokens)
+        }
+        if (config.provider == Provider.ANTHROPIC) {
+            return@withContext askAnthropic(config, prompt, maxTokens)
+        }
+        if (config.provider == Provider.OPENAI && config.endpoint.trim().endsWith("/responses")) {
+            return@withContext askOpenAiResponses(config, prompt, maxTokens)
         }
         val endpoint = config.endpoint.trim()
         require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
@@ -163,6 +176,104 @@ class ThorAiProviderManager(private val context: Context) {
         }
     }
 
+
+    /** Anthropic Messages API adapter for Claude models. */
+    private fun askAnthropic(config: Settings, prompt: String, maxTokens: Int): String {
+        val endpoint = config.endpoint.trim()
+        require(endpoint.startsWith("https://", ignoreCase = true)) { "Claude endpoint must use HTTPS." }
+        val body = JSONObject()
+            .put("model", config.model)
+            .put("max_tokens", maxTokens.coerceIn(64, 512))
+            .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt.take(4000))))
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("x-api-key", config.apiKey)
+            setRequestProperty("anthropic-version", "2023-06-01")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) {
+                val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }
+                    .getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
+                throw IllegalStateException(when (status) {
+                    401, 403 -> "Claude rejected the API key or account permissions ($detail)."
+                    429 -> "Claude API rate limit or quota reached ($detail)."
+                    else -> "Claude API request failed: $detail"
+                })
+            }
+            val content = JSONObject(raw).optJSONArray("content")
+            val answer = buildString {
+                if (content != null) for (i in 0 until content.length()) {
+                    val part = content.optJSONObject(i)
+                    if (part?.optString("type") == "text") {
+                        val value = part.optString("text")
+                        if (value.isNotBlank()) { if (isNotEmpty()) append('\n'); append(value) }
+                    }
+                }
+            }
+            return answer.takeIf { it.isNotBlank() } ?: error("Claude returned no text.")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /** OpenAI Responses API adapter for current GPT model IDs. */
+    private fun askOpenAiResponses(config: Settings, prompt: String, maxTokens: Int): String {
+        val endpoint = config.endpoint.trim()
+        require(endpoint.startsWith("https://", ignoreCase = true)) { "OpenAI endpoint must use HTTPS." }
+        val body = JSONObject()
+            .put("model", config.model)
+            .put("input", prompt.take(4000))
+            .put("max_output_tokens", maxTokens.coerceIn(64, 512))
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer ${config.apiKey}")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) {
+                val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }
+                    .getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
+                throw IllegalStateException(when (status) {
+                    401, 403 -> "OpenAI rejected the API key or permissions ($detail)."
+                    429 -> "OpenAI API rate limit or quota reached ($detail)."
+                    else -> "OpenAI API request failed: $detail"
+                })
+            }
+            val json = JSONObject(raw)
+            json.optString("output_text").takeIf { it.isNotBlank() }?.let { return it }
+            val output = json.optJSONArray("output")
+            val answer = buildString {
+                if (output != null) for (i in 0 until output.length()) {
+                    val content = output.optJSONObject(i)?.optJSONArray("content") ?: continue
+                    for (j in 0 until content.length()) {
+                        val part = content.optJSONObject(j)
+                        val value = part?.optString("text").orEmpty()
+                        if (value.isNotBlank()) { if (isNotEmpty()) append('\n'); append(value) }
+                    }
+                }
+            }
+            return answer.takeIf { it.isNotBlank() } ?: error("OpenAI returned no text.")
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     /**
      * Gemini 3.8 Flash can occasionally be overloaded on the public API.
