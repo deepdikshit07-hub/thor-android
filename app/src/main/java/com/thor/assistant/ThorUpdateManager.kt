@@ -163,7 +163,7 @@ class ThorUpdateManager(private val activity: Activity) {
             activity.startActivity(settingsIntent)
             Toast.makeText(
                 activity,
-                "Allow THOR to install this update, then check for updates again.",
+                "Allow THOR to install updates, then return here. Installation will continue automatically.",
                 Toast.LENGTH_LONG
             ).show()
             return false
