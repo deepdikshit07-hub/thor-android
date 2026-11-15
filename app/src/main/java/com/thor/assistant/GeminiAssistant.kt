@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.collect
  */
 object GeminiAssistant {
     private const val TAG = "THOR_GEMINI"
-    private const val REQUEST_TIMEOUT_MS = 22_000L
+    private const val REQUEST_TIMEOUT_MS = 45_000L
 
     suspend fun stream(prompt: String, modelName: String = "gemini-3.8-flash", onChunk: (String) -> Unit): String = withTimeout(REQUEST_TIMEOUT_MS) {
         val model = Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(modelName)
