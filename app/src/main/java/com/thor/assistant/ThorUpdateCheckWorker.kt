@@ -65,7 +65,7 @@ class ThorUpdateCheckWorker(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-                .setSmallIcon(applicationContext.applicationInfo.icon)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle("THOR update available")
                 .setContentText("THOR ${json.optString("versionName")} is ready to download.")
                 .setStyle(NotificationCompat.BigTextStyle().bigText(
