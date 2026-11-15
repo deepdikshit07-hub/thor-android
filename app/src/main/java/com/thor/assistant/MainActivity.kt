@@ -178,13 +178,31 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     .setTitle("THOR update available: ${update.versionName}")
                     .setMessage("${update.releaseNotes}\n\nDownload and install this update?")
                     .setPositiveButton("Download update") { _, _ ->
+                        val progressDialog = android.app.ProgressDialog(this@MainActivity).apply {
+                            setTitle("Downloading THOR ${update.versionName}")
+                            setMessage("Downloading and verifying the update...")
+                            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                            max = 100
+                            progress = 0
+                            setCancelable(false)
+                            show()
+                        }
                         mainScope.launch {
                             try {
                                 addMessage("THOR", "Downloading THOR ${update.versionName}...")
-                                val apk = updateManager.download(update)
-                                addMessage("THOR", "Download verified. Opening Android's installer.")
+                                val apk = updateManager.download(update) { percent ->
+                                    runOnUiThread {
+                                        if (progressDialog.isShowing) {
+                                            progressDialog.progress = percent
+                                            progressDialog.setMessage("Downloading update... $percent%")
+                                        }
+                                    }
+                                }
+                                progressDialog.dismiss()
+                                addMessage("THOR", "Download verified. Checking package and signing identity.")
                                 updateManager.install(apk)
                             } catch (error: Exception) {
+                                if (progressDialog.isShowing) progressDialog.dismiss()
                                 addMessage("THOR", "Update failed: ${error.message ?: error.javaClass.simpleName}")
                             }
                         }
