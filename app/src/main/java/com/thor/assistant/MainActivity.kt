@@ -585,18 +585,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             item.addView(TextView(this).apply {
                 text = glyph
-                textSize = 24f
+                textSize = 30f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                setTextColor(if (label == "Home") gold else ivory)
+                setTextColor(if (label == "Home") gold else Color.rgb(246, 242, 232))
             }, matchWrap())
             item.addView(TextView(this).apply {
                 text = label
-                textSize = 10f
+                textSize = 11f
                 gravity = Gravity.CENTER
-                setTextColor(if (label == "Home") gold else Color.rgb(220, 216, 207))
+                setTextColor(if (label == "Home") gold else Color.rgb(230, 225, 215))
             }, matchWrap())
-            nav.addView(item, LinearLayout.LayoutParams(0, dp(58), weight))
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(64), weight))
         }
         navItem("Home", "⌂", { }, 1f)
 
