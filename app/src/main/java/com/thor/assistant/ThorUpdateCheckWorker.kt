@@ -1,12 +1,15 @@
 package com.thor.assistant
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -52,6 +55,17 @@ class ThorUpdateCheckWorker(
             if (!NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()) {
                 return Result.success()
             }
+            // Android 13+ treats notification delivery as a runtime permission.
+            // A background worker must not prompt; simply skip this notification
+            // when the user has not granted permission.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    applicationContext,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return Result.success()
+            }
 
             createNotificationChannel()
             val openApp = Intent(applicationContext, MainActivity::class.java).apply {
@@ -75,7 +89,12 @@ class ThorUpdateCheckWorker(
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .build()
-            NotificationManagerCompat.from(applicationContext).notify(NOTIFICATION_ID, notification)
+            try {
+                NotificationManagerCompat.from(applicationContext).notify(NOTIFICATION_ID, notification)
+            } catch (_: SecurityException) {
+                // Permission may be revoked between the check and notify().
+                return Result.success()
+            }
             prefs.edit().putInt("last_notified_version", remoteVersion).apply()
             Result.success()
         } catch (error: Exception) {
