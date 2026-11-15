@@ -17,6 +17,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.KeyEvent
+import android.view.View
 import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
