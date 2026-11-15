@@ -82,6 +82,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var wakeEnabled = false
     private var waitingForWakeCommand = false
     private var wakeButton: Button? = null
+    private var liveSession: ThorLiveSession? = null
+    private var liveOrb: ThorLiveOrbView? = null
+    private var liveStatusText: TextView? = null
+    private var liveCaptionText: TextView? = null
+    private var liveToggleButton: Button? = null
+    private var liveDialog: AlertDialog? = null
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
@@ -100,10 +106,148 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
+
+    /**
+     * Native full-duplex Gemini Live conversation. Live audio is returned by
+     * Gemini and played as PCM through AudioTrack; it does not use Android TTS.
+     */
+    private fun showLiveModeDialog() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+            background = glassDrawable(0xFF101820.toInt(), 0x887BD9F4.toInt(), 26f)
+        }
+        val orb = ThorLiveOrbView(this)
+        liveOrb = orb
+        panel.addView(orb, LinearLayout.LayoutParams(dp(184), dp(184)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = dp(12)
+        })
+        val status = TextView(this).apply {
+            text = "READY FOR A LIVE CONVERSATION"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(accentColor())
+        }
+        liveStatusText = status
+        panel.addView(status, matchWrap())
+        val caption = TextView(this).apply {
+            text = "Live Mode streams microphone audio to Gemini and plays Gemini's natural voice response. A Gemini API key and microphone permission are required."
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+            minHeight = dp(54)
+        }
+        liveCaptionText = caption
+        panel.addView(caption, matchWrap())
+        val toggle = makeButton("START LIVE SESSION")
+        liveToggleButton = toggle
+        panel.addView(toggle, matchWrap())
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("THOR LIVE")
+            .setView(panel)
+            .setNegativeButton("Close", null)
+            .create()
+        liveDialog = dialog
+        toggle.setOnClickListener {
+            if (liveSession == null) startThorLive() else stopThorLive()
+        }
+        dialog.setOnDismissListener {
+            stopThorLive()
+            liveDialog = null
+            liveOrb = null
+            liveStatusText = null
+            liveCaptionText = null
+            liveToggleButton = null
+        }
+        dialog.show()
+        stylePremiumDialog(dialog)
+    }
+
+    private fun startThorLive() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1006)
+            liveStatusText?.text = "MICROPHONE PERMISSION REQUIRED"
+            return
+        }
+        val apiKey = ThorAiProviderManager(this)
+            .settings(ThorAiProviderManager.Provider.GEMINI_API).apiKey
+        if (apiKey.isBlank()) {
+            liveStatusText?.text = "GEMINI API KEY REQUIRED"
+            liveCaptionText?.text = "Open Settings → AI provider & model, select Google Gemini API, add your Gemini API key, and save. Live Mode uses this key directly."
+            Toast.makeText(this, "Add a Gemini API key in Settings → AI provider & model before starting Live Mode.", Toast.LENGTH_LONG).show()
+            return
+        }
+        beginThorLiveSession(apiKey)
+    }
+
+    private fun beginThorLiveSession(apiKey: String) {
+        if (liveSession != null || isFinishing || isDestroyed) return
+        val voiceName = when (voiceStyle.selectedItemPosition) {
+            1 -> "Aoede"
+            2 -> "Kore"
+            else -> "Charon"
+        }
+        val languageName = when (language.selectedItemPosition) {
+            1 -> "Hindi"
+            2 -> "Bengali"
+            else -> "English"
+        }
+        lateinit var session: ThorLiveSession
+        session = ThorLiveSession(this, object : ThorLiveSession.Listener {
+            override fun onState(state: ThorLiveSession.State, detail: String) {
+                liveOrb?.setLiveState(state)
+                liveStatusText?.text = detail
+                liveToggleButton?.text = if (state == ThorLiveSession.State.IDLE ||
+                    state == ThorLiveSession.State.ERROR) "START LIVE SESSION" else "END LIVE SESSION"
+                if (state == ThorLiveSession.State.ERROR && liveSession === session) liveSession = null
+                if (state == ThorLiveSession.State.IDLE || state == ThorLiveSession.State.ERROR) {
+                    liveCaptionText?.text = "Live session ended. No transcript was saved."
+                }
+            }
+
+            override fun onTranscript(speaker: String, text: String) {
+                liveCaptionText?.text = "$speaker  •  $text"
+            }
+
+            override fun onError(message: String) {
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+            }
+        })
+        liveSession = session
+        liveToggleButton?.text = "CONNECTING..."
+        liveStatusText?.text = "CONNECTING TO GEMINI LIVE"
+        liveCaptionText?.text = "Waiting for Gemini to confirm the live audio session..."
+        mainScope.launch {
+            try {
+                session.start(apiKey, voiceName, languageName)
+            } catch (error: Exception) {
+                if (liveSession === session) liveSession = null
+                liveOrb?.setLiveState(ThorLiveSession.State.ERROR)
+                liveStatusText?.text = "LIVE MODE UNAVAILABLE"
+                liveToggleButton?.text = "RETRY LIVE SESSION"
+                liveCaptionText?.text = error.message ?: "Could not start the live session."
+                android.util.Log.e("THOR_LIVE", "Live session could not start", error)
+            }
+        }
+    }
+
+    private fun stopThorLive() {
+        val session = liveSession ?: return
+        liveSession = null
+        session.stop()
+        liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
+        liveStatusText?.text = "SESSION ENDED"
+        liveToggleButton?.text = "START LIVE SESSION"
+        liveCaptionText?.text = "Live session ended. No transcript was saved."
+    }
+
     private fun showSettingsDialog() {
         val items = arrayOf(
             "Models",
             "AI provider & model",
+            "Live Mode",
             "Features",
             "Profile",
             "Appearance",
@@ -117,20 +261,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 when (which) {
                     0 -> installOfflineAi()
                     1 -> showAiProviderSettings()
-                    2 -> showFeaturesDialog()
-                    3 -> AlertDialog.Builder(this)
+                    2 -> showLiveModeDialog()
+                    3 -> showFeaturesDialog()
+                    4 -> AlertDialog.Builder(this)
                         .setTitle("THOR Profile")
                         .setMessage("Current profile: ${bossProfile.bossName()}\\nProfile data is stored on this device.")
                         .setPositiveButton("OK", null)
                         .show().also { stylePremiumDialog(it) }
-                    4 -> showThemeChooser()
-                    5 -> showLanguageVoiceInfo()
-                    6 -> AlertDialog.Builder(this)
+                    5 -> showThemeChooser()
+                    6 -> showLanguageVoiceInfo()
+                    7 -> AlertDialog.Builder(this)
                         .setTitle("About THOR")
                         .setMessage("Emblem engineered & developed by Aritra Adhikary and Deep Dikshit.")
                         .setPositiveButton("Close", null)
                         .show().also { stylePremiumDialog(it) }
-                    7 -> checkForUpdates(silent = false)
+                    8 -> checkForUpdates(silent = false)
                 }
             }
             .setNegativeButton("Close", null)
@@ -1419,6 +1564,13 @@ lower.startsWith("অ্যালার্ম ") -> {
                     addMessage("THOR", "Microphone permission is required for wake listening.")
                 }
             }
+            1006 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startThorLive()
+                else {
+                    liveStatusText?.text = "MICROPHONE PERMISSION DENIED"
+                    liveCaptionText?.text = "Allow microphone access in Android App info → Permissions to use Live Mode."
+                }
+            }
             1004 -> {
                 if (pendingBossVoiceEnrollment) {
                     pendingBossVoiceEnrollment = false
@@ -1994,6 +2146,7 @@ private fun launchIntent(
     }
 
     override fun onPause() {
+        stopThorLive()
         stopTapRecognition()
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
@@ -2001,6 +2154,7 @@ private fun launchIntent(
     }
 
     override fun onDestroy() {
+        stopThorLive()
         stopTapRecognition()
         stopWakeWord()
         try { bossRecorder?.stop() } catch (_: Exception) {}
