@@ -1530,11 +1530,8 @@ lower.startsWith("অ্যালার্ম ") -> {
             setPadding(22, 8, 22, 4)
         }
         val providerSpinner = Spinner(this)
-        providerSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            providers.map { it.title }
-        )
+        providerSpinner.adapter = premiumSpinnerAdapter(providers.map { it.title })
+        providerSpinner.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
         providerSpinner.setSelection(providers.indexOf(current.provider).coerceAtLeast(0))
 
         fun field(label: String, value: String, hint: String, password: Boolean = false): EditText {
@@ -1553,18 +1550,89 @@ lower.startsWith("অ্যালার্ম ") -> {
             }.also { panel.addView(it, matchWrap()) }
         }
 
-        panel.addView(TextView(this).apply { text = "AI provider"; textSize = 13f })
+        fun modelOptions(provider: ThorAiProviderManager.Provider): List<String> = when (provider) {
+            ThorAiProviderManager.Provider.GEMINI,
+            ThorAiProviderManager.Provider.GEMINI_API -> listOf(
+                "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
+                "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"
+            )
+            ThorAiProviderManager.Provider.OPENAI -> listOf(
+                "gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna",
+                "gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"
+            )
+            ThorAiProviderManager.Provider.ANTHROPIC -> listOf(
+                "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"
+            )
+            ThorAiProviderManager.Provider.GROQ -> listOf(
+                "llama-3.3-70b-versatile", "llama-4-scout-17b-16e-instruct",
+                "qwen-qwq-32b", "deepseek-r1-distill-llama-70b"
+            )
+            ThorAiProviderManager.Provider.OPENROUTER -> listOf(
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "deepseek/deepseek-chat", "google/gemini-2.5-flash",
+                "anthropic/claude-sonnet-4.5", "openai/gpt-4o-mini"
+            )
+            ThorAiProviderManager.Provider.DEEPSEEK -> listOf("deepseek-chat", "deepseek-reasoner")
+            ThorAiProviderManager.Provider.MISTRAL -> listOf(
+                "mistral-large-latest", "mistral-small-latest", "codestral-latest"
+            )
+            ThorAiProviderManager.Provider.CLOUDFLARE -> listOf(
+                "@cf/meta/llama-3.1-8b-instruct", "@cf/qwen/qwen3-30b-a3b-fp8"
+            )
+            ThorAiProviderManager.Provider.CUSTOM -> emptyList()
+            ThorAiProviderManager.Provider.LOCAL -> emptyList()
+        }
+
+        panel.addView(TextView(this).apply {
+            text = "AI provider"
+            textSize = 13f
+            setTextColor(accentColor())
+        }, matchWrap())
         panel.addView(providerSpinner, matchWrap())
-        val modelField = field("Model ID", current.model, "Enter the model identifier")
-        val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions endpoint")
+
+        panel.addView(TextView(this).apply {
+            text = "Available models"
+            textSize = 13f
+            setTextColor(accentColor())
+            setPadding(0, 10, 0, 3)
+        }, matchWrap())
+        val modelSpinner = Spinner(this)
+        modelSpinner.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
+        panel.addView(modelSpinner, matchWrap())
+        val modelField = field("Selected model ID", current.model, "Choose above or enter a custom model ID")
+        var activeModels = modelOptions(current.provider)
+        fun updateModelChoices(provider: ThorAiProviderManager.Provider, selectedModel: String) {
+            activeModels = modelOptions(provider)
+            val choices = activeModels + "Custom model ID"
+            modelSpinner.adapter = premiumSpinnerAdapter(choices)
+            val selectedIndex = activeModels.indexOf(selectedModel).let { if (it >= 0) it else activeModels.size }
+            modelSpinner.setSelection(selectedIndex.coerceIn(0, choices.lastIndex))
+            modelField.setText(selectedModel)
+        }
+        updateModelChoices(current.provider, current.model)
+        modelSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                if (position in activeModels.indices) modelField.setText(activeModels[position])
+            }
+        }
+
+        val endpointField = field("API endpoint", current.endpoint, "HTTPS API endpoint")
         val keyField = field(
             "API key",
             "",
-            if (current.apiKey.isNotBlank()) "Key saved encrypted on this device; blank keeps it" else "Paste provider API key",
+            if (current.apiKey.isNotBlank()) "Key saved securely on this device; blank keeps it" else "Paste your provider API key",
             true
         )
+        val signInButton = Button(this).apply {
+            text = "SIGN IN / GET API ACCESS"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            background = glassDrawable(0xFF292A30.toInt(), 0x88D7B879, 18f)
+        }
+        panel.addView(signInButton, matchWrap())
         panel.addView(TextView(this).apply {
-            text = "Choose a provider and model. API keys are encrypted with Android Keystore. Provider API billing is separate from ChatGPT subscriptions. Firebase Gemini uses THOR's managed Firebase connection; other providers use your own API key."
+            text = "Choose a provider and a model. For providers that require credentials, this opens their official developer sign-in/key page. Return to THOR and paste the API key. A normal ChatGPT or Claude website subscription does not automatically provide API access. Your key is encrypted on this device."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             setPadding(0, 12, 0, 4)
@@ -1575,38 +1643,60 @@ lower.startsWith("অ্যালার্ম ") -> {
             val needsEndpointAndKey = provider != ThorAiProviderManager.Provider.GEMINI &&
                 provider != ThorAiProviderManager.Provider.LOCAL
             modelField.isEnabled = provider != ThorAiProviderManager.Provider.LOCAL
+            modelSpinner.isEnabled = provider != ThorAiProviderManager.Provider.LOCAL
             endpointField.isEnabled = needsEndpointAndKey
             keyField.isEnabled = needsEndpointAndKey
+            signInButton.isEnabled = provider != ThorAiProviderManager.Provider.GEMINI &&
+                provider != ThorAiProviderManager.Provider.LOCAL
+            signInButton.alpha = if (signInButton.isEnabled) 1f else 0.45f
         }
         applyProviderState(current.provider)
         providerSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
-            override fun onItemSelected(
-                parent: android.widget.AdapterView<*>?,
-                view: android.view.View?,
-                position: Int,
-                id: Long
-            ) {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
                 val selected = providers[position]
                 if (selected != previousProvider) {
                     val saved = manager.settings(selected)
-                    modelField.setText(saved.model)
+                    updateModelChoices(selected, saved.model)
                     endpointField.setText(saved.endpoint)
                     keyField.setText("")
                     keyField.hint = if (saved.apiKey.isNotBlank()) {
-                        "Key saved encrypted on this device; blank keeps it"
+                        "Key saved securely on this device; blank keeps it"
                     } else {
-                        "Paste provider API key"
+                        "Paste your provider API key"
                     }
                     previousProvider = selected
                 }
                 applyProviderState(selected)
             }
         }
+        signInButton.setOnClickListener {
+            val selected = providers[providerSpinner.selectedItemPosition]
+            val url = when (selected) {
+                ThorAiProviderManager.Provider.GEMINI_API -> "https://aistudio.google.com/app/apikey"
+                ThorAiProviderManager.Provider.OPENAI -> "https://platform.openai.com/api-keys"
+                ThorAiProviderManager.Provider.ANTHROPIC -> "https://console.anthropic.com/settings/keys"
+                ThorAiProviderManager.Provider.GROQ -> "https://console.groq.com/keys"
+                ThorAiProviderManager.Provider.OPENROUTER -> "https://openrouter.ai/keys"
+                ThorAiProviderManager.Provider.DEEPSEEK -> "https://platform.deepseek.com/api_keys"
+                ThorAiProviderManager.Provider.MISTRAL -> "https://console.mistral.ai/api-keys"
+                ThorAiProviderManager.Provider.CLOUDFLARE -> "https://dash.cloudflare.com/"
+                ThorAiProviderManager.Provider.CUSTOM -> "https://platform.openai.com/docs"
+                else -> ""
+            }
+            if (url.isNotBlank()) {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    Toast.makeText(this, "Sign in on the provider page, then return to THOR and paste your API key.", Toast.LENGTH_LONG).show()
+                } catch (error: Exception) {
+                    Toast.makeText(this, "Could not open provider sign-in page: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
 
         val scroll = ScrollView(this).apply { addView(panel) }
         AlertDialog.Builder(this)
-            .setTitle("AI PROVIDER & MODEL")
+            .setTitle("AI MODEL SELECTION")
             .setView(scroll)
             .setPositiveButton("SAVE") { _, _ ->
                 val selected = providers[providerSpinner.selectedItemPosition]
@@ -1617,7 +1707,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                         endpointField.text.toString(),
                         keyField.text.toString()
                     )
-                    Toast.makeText(this, "AI provider and model saved.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "THOR will now use ${selected.title} — ${modelField.text}.", Toast.LENGTH_LONG).show()
                 } catch (error: Exception) {
                     Toast.makeText(this, "Could not save provider settings: ${error.message}", Toast.LENGTH_LONG).show()
                 }
