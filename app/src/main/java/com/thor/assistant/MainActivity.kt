@@ -122,7 +122,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
             .setNegativeButton("Close", null)
-            .show()
+            .show().also { stylePremiumDialog(it) }
     }
 
     private fun showThemeChooser() {
@@ -149,7 +149,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 Toast.makeText(this, labels[which] + " theme applied", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .show().also { stylePremiumDialog(it) }
     }
 
     private fun showLanguageVoiceInfo() {
@@ -196,7 +196,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 Toast.makeText(this, "Language and voice preferences saved", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .show().also { stylePremiumDialog(it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -323,7 +323,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                         }
                     }
                 if (!update.mandatory) builder.setNegativeButton("Later", null)
-                builder.setCancelable(!update.mandatory).show()
+                builder.setCancelable(!update.mandatory).show().also { stylePremiumDialog(it) }
             } catch (error: Exception) {
                 if (!silent) {
                     addMessage("THOR", "Couldn't check for updates: ${error.message ?: error.javaClass.simpleName}")
@@ -393,6 +393,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             speak("Welcome, Boss.")
         }
         dialog.show()
+        stylePremiumDialog(dialog)
     }
 
     private fun startBossVoiceEnrollment() {
@@ -631,17 +632,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             }
             item.addView(TextView(this).apply {
                 text = glyph
-                textSize = 17f
+                textSize = 23f
                 gravity = Gravity.CENTER
-                setTextColor(if (label == "Home") gold else Color.rgb(171, 171, 176))
+                includeFontPadding = false
+                setTextColor(if (label == "Home") gold else Color.rgb(218, 216, 210))
             }, matchWrap())
             item.addView(TextView(this).apply {
                 text = label
-                textSize = 9f
+                textSize = 10f
                 gravity = Gravity.CENTER
-                setTextColor(if (label == "Home") ivory else muted)
+                setTextColor(if (label == "Home") ivory else Color.rgb(190, 188, 182))
             }, matchWrap())
-            nav.addView(item, LinearLayout.LayoutParams(0, dp(46), 1f))
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(54), 1f))
         }
         navItem("Home", "⌂") { }
         navItem("Chat", "◉") { showChatDialog() }
@@ -767,10 +769,59 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             input = previousInput
         }
         dialog.show()
+        stylePremiumDialog(dialog)
         dialog.window?.setLayout(
             (resources.displayMetrics.widthPixels * 0.94f).toInt(),
             (resources.displayMetrics.heightPixels * 0.78f).toInt()
         )
+    }
+
+    /**
+     * Gives every native THOR dialog a contemporary charcoal / champagne treatment.
+     * Existing dialog actions remain unchanged.
+     */
+    private fun stylePremiumDialog(dialog: AlertDialog) {
+        val window = dialog.window ?: return
+        window.setBackgroundDrawableResource(android.R.color.transparent)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        window.setDimAmount(0.68f)
+        val surface = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.rgb(39, 40, 45), Color.rgb(20, 21, 25))
+        ).apply {
+            cornerRadius = dp(26).toFloat()
+            setStroke(dp(1), 0x66D7B879)
+        }
+        window.decorView.background = surface
+        window.decorView.setPadding(dp(8), dp(5), dp(8), dp(5))
+
+        val ivory = Color.rgb(245, 242, 235)
+        val muted = Color.rgb(190, 188, 182)
+        dialog.findViewById<TextView>(android.R.id.alertTitle)?.apply {
+            setTextColor(ivory)
+            textSize = 19f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        }
+        dialog.findViewById<TextView>(android.R.id.message)?.apply {
+            setTextColor(muted)
+            textSize = 14f
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        listOf(android.R.id.button1, android.R.id.button2, android.R.id.button3).forEach { id ->
+            dialog.findViewById<Button>(id)?.apply {
+                setTextColor(accentColor())
+                textSize = 13f
+                isAllCaps = false
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                background = glassRipple(0x332F3034, 0x66D7B879, 18f)
+            }
+        }
+        dialog.listView?.apply {
+            divider = android.graphics.drawable.ColorDrawable(0x22FFFFFF)
+            dividerHeight = dp(1)
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        window.setLayout((resources.displayMetrics.widthPixels * 0.91f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
