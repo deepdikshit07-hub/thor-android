@@ -93,7 +93,7 @@ jobs:
           CERTS="$("$APKSIGNER" verify --print-certs "$APK")"
           echo "## Android signing certificate fingerprints" >> "$GITHUB_STEP_SUMMARY"
           echo "These fingerprints identify the certificate on this exact APK." >> "$GITHUB_STEP_SUMMARY"
-          echo "$CERTS" | grep -E 'Signer #1 certificate (SHA-1|SHA-256) digest:' >> "$GITHUB_STEP_SUMMARY"
+          echo "$CERTS" | grep -E 'Signer #1 certificate (SHA-1|SHA-256) digest:' | tee /dev/stderr >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
         id: upload_apk
