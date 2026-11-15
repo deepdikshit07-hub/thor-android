@@ -70,7 +70,7 @@ Never paste a password or access token into chat or commit it into the project.
 
 ## OTA updates
 
-THOR checks the latest GitHub Release when the app starts, provides a **CHECK FOR UPDATES** button, and schedules a network-connected background check approximately every six hours. When a newer release is found, THOR posts an Android notification; tapping it opens THOR to review and download the update. The updater verifies the APK SHA-256 checksum and opens Android's package installer. Android requires the user to approve installation, and Android 13+ users must allow THOR notifications for background alerts.
+THOR checks the latest GitHub Release when the app starts, provides a **CHECK FOR UPDATES** button, and schedules a network-connected background check approximately every hour (Android may defer background work to save battery). When a newer release is found, THOR posts an Android notification; tapping it opens THOR to review and download the update. The updater verifies the APK SHA-256 checksum and opens Android's package installer. Android requires the user to approve installation, and Android 13+ users must allow THOR notifications for background alerts.
 
 Before publishing the first OTA release:
 
@@ -84,7 +84,7 @@ The release workflow also uploads the signed production APK and `latest.json` to
 The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release. Workflow builds use the repository-wide GitHub run ID as their version code so later workflow APKs have a higher version code.
 
 ## Device notes
-- `minSdk 23` supports older Android releases; the app should run on Android 10/11 and newer.
+- `minSdk 24` supports older Android releases; the app should run on Android 10/11 and newer.
 - The speech-recognition activity is provided by the device's installed speech service. `PREFER_OFFLINE` is only a preference and does not guarantee offline recognition.
 - For offline speech, download the required language packs in the phone's speech input settings if your installed engine offers them.
 - Text-to-Speech voice availability depends on installed Android TTS voice data.
