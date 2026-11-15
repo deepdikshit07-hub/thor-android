@@ -4,9 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - thor-2.0-upgrade
-      - feature/thor-ota-updates
+      - "**"
   pull_request:
     branches:
       - main
