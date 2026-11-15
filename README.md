@@ -68,6 +68,21 @@ git push
 
 Never paste a password or access token into chat or commit it into the project.
 
+## OTA updates
+
+THOR checks the latest GitHub Release when the app starts and also provides a **CHECK FOR UPDATES** button. It downloads the signed APK, verifies the SHA-256 checksum from the release manifest, and opens Android's package installer. Android may ask the user to approve installation.
+
+Before publishing the first OTA release:
+
+1. Create one permanent Android release keystore and keep a secure offline backup.
+2. Add these four GitHub Actions repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
+3. Confirm that the release keystore certificate matches the certificate on currently installed THOR builds.
+4. Only after the signing identity is confirmed, publish a version tag such as `v2.1.0`.
+
+The current debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
+
+The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release.
+
 ## Device notes
 - `minSdk 23` supports older Android releases; the app should run on Android 10/11 and newer.
 - The speech-recognition activity is provided by the device's installed speech service. `PREFER_OFFLINE` is only a preference and does not guarantee offline recognition.
