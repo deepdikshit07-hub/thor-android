@@ -84,6 +84,77 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
     private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
 
+    private fun accentColor(): Int {
+        val key = getSharedPreferences("thor_appearance", MODE_PRIVATE)
+            .getString("accent", "champagne")
+        return when (key) {
+            "blue" -> Color.rgb(126, 177, 220)
+            "purple" -> Color.rgb(177, 151, 218)
+            "green" -> Color.rgb(139, 183, 154)
+            "rose" -> Color.rgb(211, 155, 169)
+            "gold" -> Color.rgb(215, 184, 121)
+            else -> Color.rgb(213, 197, 164)
+        }
+    }
+
+    private fun showFeaturesDialog() {
+        val items = arrayOf(
+            "Personalize appearance",
+            "Offline AI",
+            "Language and voice",
+            "Check for updates",
+            "Help and commands"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("THOR Features")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showThemeChooser()
+                    1 -> installOfflineAi()
+                    2 -> showLanguageVoiceInfo()
+                    3 -> checkForUpdates(silent = false)
+                    4 -> addMessage("THOR", helpText())
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showThemeChooser() {
+        val labels = arrayOf(
+            "Silver & Champagne",
+            "Ocean Blue",
+            "Royal Purple",
+            "Emerald Green",
+            "Rose"
+        )
+        val keys = arrayOf("champagne", "blue", "purple", "green", "rose")
+        val current = getSharedPreferences("thor_appearance", MODE_PRIVATE)
+            .getString("accent", "champagne")
+        val selected = keys.indexOf(current).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Choose your accent")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                getSharedPreferences("thor_appearance", MODE_PRIVATE)
+                    .edit().putString("accent", keys[which]).apply()
+                dialog.dismiss()
+                val previousChat = if (::chat.isInitialized) chat.text.toString() else ""
+                buildScreen()
+                if (::chat.isInitialized) chat.text = previousChat
+                Toast.makeText(this, labels[which] + " theme applied", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showLanguageVoiceInfo() {
+        AlertDialog.Builder(this)
+            .setTitle("Language and voice")
+            .setMessage("Choose English, Hindi or Bengali in the Language selector. Choose your preferred voice style in Voice, then use Preview Voice to hear it.")
+            .setPositiveButton("Got it", null)
+            .show()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
@@ -374,7 +445,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(14), dp(12), dp(14), dp(10))
-            background = glassDrawable(0xB526272B.toInt(), 0x66D5C5A4, 28f)
+            background = glassDrawable(0xB526272B.toInt(), accentColor(), 28f)
             elevation = dp(5).toFloat()
         }
         val reactorTitle = TextView(this).apply {
@@ -382,7 +453,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             textSize = 10f
             letterSpacing = 0.25f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(213, 197, 164))
+            setTextColor(accentColor())
         }
         hero.addView(reactorTitle, matchWrap())
         hero.addView(ThorHudView(this), LinearLayout.LayoutParams(
@@ -403,7 +474,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val settingsCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(8))
-            background = glassDrawable(0x9924262A.toInt(), 0x33E4D8C4, 22f)
+            background = glassDrawable(0x9924262A.toInt(), accentColor(), 22f)
         }
         val languageLabel = TextView(this).apply {
             text = "LANGUAGE"
@@ -419,7 +490,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             languages
         )
         language.setPadding(dp(10), dp(2), dp(10), dp(2))
-        language.background = glassDrawable(0xAA34363B.toInt(), 0x447F7B72, 14f)
+        language.background = glassDrawable(0xAA34363B.toInt(), accentColor(), 14f)
         settingsCard.addView(language, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(44)
         ).apply { bottomMargin = dp(8) })
@@ -450,7 +521,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
         voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
-        voiceStyle.background = glassDrawable(0xAA34363B.toInt(), 0x447F7B72, 16f)
+        voiceStyle.background = glassDrawable(0xAA34363B.toInt(), accentColor(), 16f)
         voiceStyle.setPadding(dp(8), 0, dp(8), 0)
         voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -475,7 +546,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val chatPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(9), dp(12), dp(8))
-            background = glassDrawable(0xAA202226.toInt(), 0x44D9CFBC, 22f)
+            background = glassDrawable(0xAA202226.toInt(), accentColor(), 22f)
         }
         val chatHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -518,7 +589,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(5), dp(4), dp(5), dp(4))
-            background = glassDrawable(0xCC303238.toInt(), 0x668C887E, 24f)
+            background = glassDrawable(0xCC303238.toInt(), accentColor(), 24f)
         }
         input = EditText(this).apply {
             hint = "Message THOR..."
@@ -610,7 +681,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         setPadding(dp(8), dp(4), dp(8), dp(4))
         setTextColor(Color.rgb(242, 240, 234))
         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-        background = glassRipple(0xCC303238.toInt(), 0x55D9C9A8.toInt(), 22f)
+        background = glassRipple(0xCC303238.toInt(), accentColor(), 22f)
         stateListAnimator = null
         elevation = dp(2).toFloat()
     }
