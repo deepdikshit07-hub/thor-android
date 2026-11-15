@@ -32,7 +32,8 @@ class ThorSpeechEngine(context: Context) {
         private const val EXPECTED_MODEL_BYTES = 100L * 1024L * 1024L
     }
 
-    private val modelDirectory = File(context.filesDir, "thor-speech/whisper-tiny")
+    private val appContext = context.applicationContext
+    private val modelDirectory = File(appContext.filesDir, "thor-speech/whisper-tiny")
     private val encoderFile = File(modelDirectory, "tiny-encoder.int8.onnx")
     private val decoderFile = File(modelDirectory, "tiny-decoder.int8.onnx")
     private val tokensFile = File(modelDirectory, "tiny-tokens.txt")
@@ -49,8 +50,7 @@ class ThorSpeechEngine(context: Context) {
         withContext(Dispatchers.IO) {
             if (isInstalled()) return@withContext
 
-            val freeBytes = StatFs(modelDirectory.parentFile?.absolutePath
-                ?: modelDirectory.absolutePath).availableBytes
+            val freeBytes = StatFs(appContext.filesDir.absolutePath).availableBytes
             if (freeBytes < MIN_FREE_BYTES) {
                 error("THOR needs at least 220 MB of free storage for its offline speech model.")
             }
