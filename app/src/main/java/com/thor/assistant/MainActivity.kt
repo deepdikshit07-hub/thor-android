@@ -122,7 +122,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     4 -> showLanguageVoiceInfo()
                     5 -> AlertDialog.Builder(this)
                         .setTitle("About THOR")
-                        .setMessage("Emblem engineered & developed by Aritra Adhikary and Deep Dixit.")
+                        .setMessage("Emblem engineered & developed by Aritra Adhikary and Deep Dikshit.")
                         .setPositiveButton("Close", null)
                         .show().also { stylePremiumDialog(it) }
                     6 -> checkForUpdates(silent = false)
@@ -538,8 +538,49 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             letterSpacing = 0.22f
             gravity = Gravity.CENTER
             setTextColor(muted)
-            setPadding(0, 0, 0, dp(24))
+            setPadding(0, 0, 0, dp(12))
         }, matchWrap())
+
+        // A discreet creator seal: visually tied to the Arc Reactor without competing with it.
+        val creatorMark = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(5), dp(14), dp(14))
+        }
+        creatorMark.addView(TextView(this).apply {
+            text = "A  •  D"
+            textSize = 10f
+            letterSpacing = 0.04f
+            gravity = Gravity.CENTER
+            setTextColor(gold)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x221A1916)
+                setStroke(dp(1), 0x99D7B879.toInt())
+            }
+        }, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+            rightMargin = dp(11)
+        })
+        val creatorCopy = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        creatorCopy.addView(TextView(this).apply {
+            text = "ENGINEERED & DEVELOPED BY"
+            textSize = 8f
+            letterSpacing = 0.14f
+            setTextColor(Color.rgb(151, 145, 132))
+        }, matchWrap())
+        creatorCopy.addView(TextView(this).apply {
+            text = "ARITRA ADHIKARY  •  DEEP DIKSHIT"
+            textSize = 10f
+            letterSpacing = 0.045f
+            setTextColor(Color.rgb(220, 202, 166))
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        }, matchWrap())
+        creatorMark.addView(creatorCopy, matchWrap())
+        column.addView(creatorMark, matchWrap())
 
         val chatAction = makeButton("◉     Chat                         ›")
         chatAction.textSize = 18f
