@@ -146,7 +146,81 @@ class ThorUpdateManager(private val activity: Activity) {
             }
         }
 
+    private fun verifyApkIdentity(apkFile: File) {
+        val packageManager = activity.packageManager
+        val archiveInfo = if (Build.VERSION.SDK_INT >= 28) {
+            packageManager.getPackageArchiveInfo(
+                apkFile.absolutePath,
+                PackageManager.GET_SIGNING_CERTIFICATES
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageArchiveInfo(
+                apkFile.absolutePath,
+                PackageManager.GET_SIGNATURES
+            )
+        } ?: error("Android could not read the downloaded APK.")
+
+        require(archiveInfo.packageName == activity.packageName) {
+            "This update is not a THOR installation package."
+        }
+
+        val installedInfo = if (Build.VERSION.SDK_INT >= 28) {
+            packageManager.getPackageInfo(
+                activity.packageName,
+                PackageManager.GET_SIGNING_CERTIFICATES
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(
+                activity.packageName,
+                PackageManager.GET_SIGNATURES
+            )
+        }
+
+        val installedSigners = if (Build.VERSION.SDK_INT >= 28) {
+            installedInfo.signingInfo?.apkContentsSigners
+        } else {
+            @Suppress("DEPRECATION")
+            installedInfo.signatures
+        } ?: error("Could not verify the installed THOR signing certificate.")
+
+        val updateSigners = if (Build.VERSION.SDK_INT >= 28) {
+            archiveInfo.signingInfo?.apkContentsSigners
+        } else {
+            @Suppress("DEPRECATION")
+            archiveInfo.signatures
+        } ?: error("Could not verify the update's signing certificate.")
+
+        fun fingerprints(signatures: Array<android.content.pm.Signature>): Set<String> =
+            signatures.map { signature ->
+                MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                    .joinToString("") { byte -> "%02x".format(byte) }
+            }.toSet()
+
+        require(fingerprints(installedSigners) == fingerprints(updateSigners)) {
+            "This update was signed with a different key. Android cannot install it over this THOR copy; a one-time migration install is required."
+        }
+
+        val candidateVersion = if (Build.VERSION.SDK_INT >= 28) {
+            archiveInfo.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            archiveInfo.versionCode.toLong()
+        }
+        val installedVersion = if (Build.VERSION.SDK_INT >= 28) {
+            installedInfo.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            installedInfo.versionCode.toLong()
+        }
+        require(candidateVersion > installedVersion) {
+            "The downloaded THOR version is not newer than the installed version."
+        }
+    }
+
     fun install(apkFile: File): Boolean {
+        verifyApkIdentity(apkFile)
         if (!apkFile.isFile || apkFile.length() == 0L) {
             Toast.makeText(activity, "The update file is missing. Download it again.", Toast.LENGTH_LONG).show()
             return false
