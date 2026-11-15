@@ -1011,8 +1011,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun askLocalOrFallback(prompt: String) {
         if (!offlineAi.isModelInstalled() && !offlineAi.hasBundledModel()) {
-            val fallback = offlineReply(prompt) +
-                "\\n\\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
+            val fallback = "The offline AI model is not installed yet, so offline chat is unavailable. THOR can still use online AI: open Settings > AI provider & model, choose an online provider, and add its API key if required. Check your internet connection and try again."
             addMessage("THOR", fallback)
             speak(fallback)
             return
