@@ -129,3 +129,12 @@ jobs:
           files: |
             release-assets/thor-release.apk
             release-assets/latest.json
+      - name: Upload signed APK to Actions artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: THOR-release-${{ steps.build.outputs.version_name }}
+          path: |
+            release-assets/thor-release.apk
+            release-assets/latest.json
+          if-no-files-found: error
+          retention-days: 90
