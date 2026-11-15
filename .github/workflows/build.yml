@@ -1,4 +1,3 @@
-
 name: Build THOR APK
 
 on:
@@ -7,6 +6,7 @@ on:
     branches:
       - main
       - thor-2.0-upgrade
+      - feature/thor-ota-updates
   pull_request:
     branches:
       - main
@@ -41,15 +41,9 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Download bundled offline AI model
-        run: |
-          mkdir -p app/src/main/assets
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm?download=true" \
-            -o app/src/main/assets/Qwen3-0.6B.litertlm
-          test "$(stat -c%s app/src/main/assets/Qwen3-0.6B.litertlm)" -gt 100000000
-
-      - name: Build debug APK with bundled offline AI
+      # The 586 MB LiteRT model is intentionally NOT bundled into the APK.
+      # ThorOfflineAi already downloads it on demand into private app storage.
+      - name: Build lightweight debug APK
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Upload APK
@@ -59,4 +53,3 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
-          
