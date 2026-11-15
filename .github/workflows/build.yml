@@ -39,8 +39,12 @@ jobs:
         with:
           gradle-version: '8.13'
 
+      - name: Run Android lint and unit tests
+        run: |
+          gradle --no-daemon :app:lintDebug :app:testDebugUnitTest
+
       # The 586 MB LiteRT model is intentionally NOT bundled into the APK.
-      # ThorOfflineAi already downloads it on demand into private app storage.
+      # ThorOfflineAi downloads it on demand into private app storage.
       - name: Build lightweight debug APK
         run: |
           VERSION_CODE="$GITHUB_RUN_ID"
