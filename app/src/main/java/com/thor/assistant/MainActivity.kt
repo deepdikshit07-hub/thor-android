@@ -529,7 +529,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         settings.textSize = 20f
         settings.background = glassRipple(0x332F3034, 0x55D7B879, 24f)
         header.addView(settings, LinearLayout.LayoutParams(dp(46), dp(46)))
-        settings.setOnClickListener { showLanguageVoiceInfo() }
+        settings.setOnClickListener { showSettingsDialog() }
         root.addView(header, matchWrap())
 
         val welcome = TextView(this).apply {
@@ -726,7 +726,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         navItem("Home", "⌂") { }
         navItem("Chat", "◉") { showChatDialog() }
         navItem("Tools", "▦") { showFeaturesDialog() }
-        navItem("Settings", "⚙") { showLanguageVoiceInfo() }
+        navItem("Settings", "⚙") { showSettingsDialog() }
         root.addView(nav, matchWrap())
 
         // Keep a lightweight backing transcript view so THOR can append messages before Chat is opened.
