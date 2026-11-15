@@ -396,209 +396,285 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun buildScreen() {
+        val ink = Color.rgb(15, 16, 19)
+        val panel = Color.rgb(29, 30, 34)
+        val muted = Color.rgb(158, 158, 162)
+        val ivory = Color.rgb(245, 242, 235)
+        val gold = Color.rgb(215, 184, 121)
+        val accent = accentColor()
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(12))
+            setPadding(dp(18), dp(12), dp(18), dp(10))
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(17, 18, 21), Color.rgb(28, 29, 33), Color.rgb(10, 11, 14))
+                intArrayOf(Color.rgb(13, 14, 17), Color.rgb(24, 24, 27), Color.rgb(12, 13, 16))
             )
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(2), dp(4), dp(10))
+            setPadding(dp(2), dp(4), dp(2), dp(12))
         }
-        val brandColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val title = TextView(this).apply {
+        val brand = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        brand.addView(TextView(this).apply {
             text = "THOR"
             textSize = 27f
-            letterSpacing = 0.20f
+            letterSpacing = 0.18f
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-            setTextColor(Color.rgb(241, 240, 236))
-            setShadowLayer(dp(5).toFloat(), 0f, 0f, Color.rgb(173, 137, 78))
-        }
-        brandColumn.addView(title, matchWrap())
-        val subtitle = TextView(this).apply {
-            text = "PERSONAL INTELLIGENCE"
+            setTextColor(ivory)
+        }, matchWrap())
+        brand.addView(TextView(this).apply {
+            text = "YOUR PERSONAL AI"
             textSize = 9f
             letterSpacing = 0.22f
-            setTextColor(Color.rgb(135, 171, 194))
-        }
-        brandColumn.addView(subtitle, matchWrap())
-        header.addView(brandColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
-        val status = TextView(this).apply {
-            text = "●  SYSTEM READY"
-            textSize = 10f
-            letterSpacing = 0.06f
-            setTextColor(Color.rgb(139, 239, 207))
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(9), dp(12), dp(9))
-            background = glassDrawable(0xCC153A39.toInt(), 0x6659DDBA, 22f)
-        }
-        header.addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            rightMargin = dp(6)
-        })
-        val featuresButton = makeButton("FEATURES")
-        featuresButton.setOnClickListener { showFeaturesDialog() }
-        header.addView(featuresButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
+            setTextColor(muted)
+        }, matchWrap())
+        header.addView(brand, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val settings = makeButton("⚙")
+        settings.textSize = 20f
+        settings.background = glassRipple(0x332F3034, 0x55D7B879, 24f)
+        header.addView(settings, LinearLayout.LayoutParams(dp(46), dp(46)))
+        settings.setOnClickListener { showLanguageVoiceInfo() }
         root.addView(header, matchWrap())
+
+        val welcome = TextView(this).apply {
+            text = "Good to see you"
+            textSize = 22f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(ivory)
+            setPadding(dp(2), 0, 0, dp(3))
+        }
+        root.addView(welcome, matchWrap())
+        root.addView(TextView(this).apply {
+            text = "What would you like me to do?"
+            textSize = 13f
+            setTextColor(muted)
+            setPadding(dp(2), 0, 0, dp(14))
+        }, matchWrap())
+
+        val content = ScrollView(this).apply {
+            isFillViewport = false
+            clipToPadding = false
+            setPadding(0, 0, 0, dp(8))
+        }
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
 
         val hero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(10))
-            background = glassDrawable(0xB526272B.toInt(), accentColor(), 28f)
-            elevation = dp(5).toFloat()
+            setPadding(dp(14), dp(12), dp(14), dp(13))
+            background = glassDrawable(0xE51F2024.toInt(), 0x66D7B879, 30f)
+            elevation = dp(4).toFloat()
         }
-        val reactorTitle = TextView(this).apply {
+        hero.addView(TextView(this).apply {
             text = "ARC REACTOR"
             textSize = 10f
-            letterSpacing = 0.25f
+            letterSpacing = 0.26f
             gravity = Gravity.CENTER
-            setTextColor(accentColor())
-        }
-        hero.addView(reactorTitle, matchWrap())
+            setTextColor(gold)
+        }, matchWrap())
         hero.addView(ThorHudView(this), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(164)
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(188)
         ))
-        val credit = TextView(this).apply {
-            text = "EMBLEM ENGINEERED & DEVELOPED BY\nARITRA ADHIKARY  •  DEEP DIXIT"
-            textSize = 8.5f
-            letterSpacing = 0.08f
+        hero.addView(TextView(this).apply {
+            text = "TAP TO TALK WITH THOR"
+            textSize = 11f
+            letterSpacing = 0.16f
+            gravity = Gravity.CENTER
+            setTextColor(ivory)
+            setPadding(0, dp(2), 0, dp(7))
+        }, matchWrap())
+        hero.addView(TextView(this).apply {
+            text = "EMBLEM ENGINEERED & DEVELOPED BY\nARITRA ADHIKARY AND DEEP DIXIT"
+            textSize = 8f
+            letterSpacing = 0.07f
             gravity = Gravity.CENTER
             setLineSpacing(dp(2).toFloat(), 1f)
-            setTextColor(Color.rgb(154, 184, 204))
-            setPadding(0, dp(2), 0, dp(2))
-        }
-        hero.addView(credit, matchWrap())
-        root.addView(hero, matchWrap())
+            setTextColor(Color.rgb(177, 166, 145))
+        }, matchWrap())
+        hero.setOnClickListener { startVoiceInput() }
+        column.addView(hero, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(14) })
 
-        val settingsCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(8))
-            background = glassDrawable(0x9924262A.toInt(), accentColor(), 22f)
-        }
-        val languageLabel = TextView(this).apply {
-            text = "LANGUAGE"
-            textSize = 9f
-            letterSpacing = 0.16f
-            setTextColor(Color.rgb(142, 177, 202))
-        }
-        settingsCard.addView(languageLabel, matchWrap())
-        language = Spinner(this)
-        language.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            languages
-        )
-        language.setPadding(dp(10), dp(2), dp(10), dp(2))
-        language.background = glassDrawable(0xAA34363B.toInt(), accentColor(), 14f)
-        settingsCard.addView(language, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(44)
-        ).apply { bottomMargin = dp(8) })
-
-        val actionRow = LinearLayout(this).apply {
+        val statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = glassDrawable(0xAA25262A.toInt(), 0x44D7B879, 20f)
         }
-        val offlineButton = makeButton("INSTALL OFFLINE AI")
-        offlineAiButton = offlineButton
-        offlineButton.setOnClickListener { installOfflineAi() }
-        actionRow.addView(offlineButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-            rightMargin = dp(6)
+        val statusText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        statusText.addView(TextView(this).apply {
+            text = "THOR IS READY"
+            textSize = 11f
+            letterSpacing = 0.12f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(ivory)
+        }, matchWrap())
+        statusText.addView(TextView(this).apply {
+            text = "Your assistant is standing by"
+            textSize = 11f
+            setTextColor(muted)
+            setPadding(0, dp(3), 0, 0)
+        }, matchWrap())
+        statusCard.addView(statusText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        statusCard.addView(TextView(this).apply {
+            text = "●"
+            textSize = 15f
+            setTextColor(Color.rgb(151, 196, 157))
         })
-        val updateButton = makeButton("CHECK UPDATES")
-        updateButton.setOnClickListener { checkForUpdates(silent = false) }
-        actionRow.addView(updateButton, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-            leftMargin = dp(6)
-        })
-        settingsCard.addView(actionRow)
-        root.addView(settingsCard, matchWrap())
+        column.addView(statusCard, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(16) })
 
-        val voiceRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(8))
+        val sectionTitle = TextView(this).apply {
+            text = "QUICK ACCESS"
+            textSize = 10f
+            letterSpacing = 0.20f
+            setTextColor(Color.rgb(183, 177, 165))
+            setPadding(dp(2), 0, 0, dp(10))
         }
-        voiceStyle = Spinner(this)
-        voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
-        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
-        voiceStyle.background = glassDrawable(0xAA34363B.toInt(), accentColor(), 16f)
-        voiceStyle.setPadding(dp(8), 0, dp(8), 0)
-        voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", position).apply()
-                applyVoiceStyle()
-            }
-        }
-        voiceRow.addView(voiceStyle, LinearLayout.LayoutParams(0, dp(42), 1f).apply { rightMargin = dp(8) })
-        val previewVoice = makeButton("PREVIEW VOICE")
-        previewVoice.setOnClickListener {
-            val sample = when (language.selectedItemPosition) {
-                1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
-                2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
-                else -> "Hello. I am THOR. Systems are ready."
-            }
-            speak(sample)
-        }
-        voiceRow.addView(previewVoice, LinearLayout.LayoutParams(0, dp(42), 1f))
-        root.addView(voiceRow, matchWrap())
+        column.addView(sectionTitle, matchWrap())
 
-        val chatPanel = LinearLayout(this).apply {
+        val tileRows = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(9), dp(12), dp(8))
-            background = glassDrawable(0xAA202226.toInt(), accentColor(), 22f)
         }
-        val chatHeader = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        fun tileRow(
+            left: Triple<String, String, () -> Unit>,
+            right: Triple<String, String, () -> Unit>
+        ) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(makeHomeTile(left.first, left.second, left.third), LinearLayout.LayoutParams(0, dp(104), 1f).apply { rightMargin = dp(6); bottomMargin = dp(10) })
+            row.addView(makeHomeTile(right.first, right.second, right.third), LinearLayout.LayoutParams(0, dp(104), 1f).apply { leftMargin = dp(6); bottomMargin = dp(10) })
+            tileRows.addView(row, matchWrap())
         }
-        val chatTitle = TextView(this).apply {
-            text = "THOR  /  CONVERSATION"
-            textSize = 9f
-            letterSpacing = 0.14f
-            setTextColor(Color.rgb(135, 202, 230))
-        }
-        chatHeader.addView(chatTitle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val liveStatus = TextView(this).apply {
-            text = "● READY"
-            textSize = 9f
-            setTextColor(Color.rgb(133, 223, 190))
-        }
-        chatHeader.addView(liveStatus)
-        chatPanel.addView(chatHeader, matchWrap())
+        tileRow(Triple("◉", "Chat", { showChatDialog() }), Triple("⌁", "Voice", { startVoiceInput() }))
+        tileRow(Triple("✧", "Offline AI", { installOfflineAi() }), Triple("▦", "Tools & features", { showFeaturesDialog() }))
+        tileRow(Triple("↻", "App updates", { checkForUpdates(silent = false) }), Triple("文", "Language & voice", { showLanguageVoiceInfo() }))
+        column.addView(tileRows, matchWrap())
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            clipToPadding = false
+        val footer = TextView(this).apply {
+            text = "A smarter way to get things done."
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(113, 113, 118))
+            setPadding(0, dp(5), 0, dp(10))
         }
+        column.addView(footer, matchWrap())
+        content.addView(column)
+        root.addView(content, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(5), dp(7), dp(5), dp(5))
+            background = glassDrawable(0xE51E1F23.toInt(), 0x44D7B879, 24f)
+        }
+        fun navItem(label: String, glyph: String, action: () -> Unit) {
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(0, dp(3), 0, dp(3))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { action() }
+            }
+            item.addView(TextView(this).apply {
+                text = glyph
+                textSize = 17f
+                gravity = Gravity.CENTER
+                setTextColor(if (label == "Home") gold else Color.rgb(171, 171, 176))
+            }, matchWrap())
+            item.addView(TextView(this).apply {
+                text = label
+                textSize = 9f
+                gravity = Gravity.CENTER
+                setTextColor(if (label == "Home") ivory else muted)
+            }, matchWrap())
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(46), 1f))
+        }
+        navItem("Home", "⌂") { }
+        navItem("Chat", "◉") { showChatDialog() }
+        navItem("Tools", "▦") { showFeaturesDialog() }
+        navItem("Settings", "⚙") { showLanguageVoiceInfo() }
+        root.addView(nav, matchWrap())
+
+        // Keep a lightweight backing transcript view so THOR can append messages before Chat is opened.
         chat = TextView(this).apply {
             textSize = 14f
-            setTextColor(Color.rgb(226, 237, 247))
+            setTextColor(ivory)
+        }
+        setContentView(root)
+    }
+
+    private fun makeHomeTile(glyph: String, label: String, action: () -> Unit): LinearLayout {
+        val tile = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(15), dp(12), dp(12), dp(12))
+            background = glassDrawable(0xB52B2C30.toInt(), 0x44D7B879, 22f)
+            isClickable = true
+            isFocusable = true
+            elevation = dp(2).toFloat()
+            setOnClickListener { action() }
+        }
+        tile.addView(TextView(this).apply {
+            text = glyph
+            textSize = 22f
+            setTextColor(accentColor())
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(dp(34), dp(34)))
+        tile.addView(TextView(this).apply {
+            text = label
+            textSize = 13f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(Color.rgb(241, 239, 233))
+            setPadding(0, dp(5), 0, 0)
+        }, matchWrap())
+        return tile
+    }
+
+    private fun showChatDialog() {
+        val previousChat = chat
+        val previousInput = input
+        val dialogContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(10))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(24, 25, 29), Color.rgb(14, 15, 18))
+            )
+        }
+        val transcript = TextView(this).apply {
+            text = previousChat.text
+            textSize = 14f
+            setTextColor(Color.rgb(239, 238, 233))
             setPadding(dp(4), dp(8), dp(4), dp(12))
             setLineSpacing(dp(3).toFloat(), 1f)
         }
-        scroll.addView(chat)
-        chatPanel.addView(scroll, LinearLayout.LayoutParams(
+        chat = transcript
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(transcript)
+        }
+        dialogContent.addView(scroll, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
-        root.addView(chatPanel, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ).apply { bottomMargin = dp(8) })
-
         val composer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(5), dp(4), dp(5), dp(4))
             background = glassDrawable(0xCC303238.toInt(), accentColor(), 24f)
         }
-        input = EditText(this).apply {
+        val messageInput = EditText(this).apply {
             hint = "Message THOR..."
-            setHintTextColor(Color.rgb(132, 157, 178))
+            setHintTextColor(Color.rgb(145, 145, 150))
             setTextColor(Color.WHITE)
             textSize = 14f
             setSingleLine(true)
@@ -606,36 +682,34 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(dp(10), dp(8), dp(8), dp(8))
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
         }
-        composer.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
-        val send = makeButton("SEND")
-        send.background = glassRipple(0xFF3A3B40.toInt(), 0x66D9B978.toInt(), 20f)
+        input = messageInput
+        composer.addView(messageInput, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val send = makeButton("Send")
         send.setOnClickListener {
-            val command = input.text.toString().trim()
+            val command = messageInput.text.toString().trim()
             if (command.isNotEmpty()) {
-                input.setText("")
+                messageInput.setText("")
                 handleCommand(command)
             }
         }
         composer.addView(send, LinearLayout.LayoutParams(dp(76), dp(42)))
-        root.addView(composer, matchWrap())
+        dialogContent.addView(composer, matchWrap())
 
-        val controls = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Chat with THOR")
+            .setView(dialogContent)
+            .setNegativeButton("Close", null)
+            .create()
+        dialog.setOnDismissListener {
+            previousChat.text = transcript.text
+            chat = previousChat
+            input = previousInput
         }
-        val mic = makeButton("MIC")
-        mic.setOnClickListener { startVoiceInput() }
-        val help = makeButton("HELP")
-        help.setOnClickListener { addMessage("THOR", helpText()) }
-        val wake = makeButton("WAKE: OFF")
-        wakeButton = wake
-        wake.setOnClickListener { toggleWakeWord(wake) }
-        controls.addView(mic, weightedButton())
-        controls.addView(help, weightedButton())
-        controls.addView(wake, weightedButton())
-        root.addView(controls, matchWrap())
-
-        setContentView(root)
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+            (resources.displayMetrics.heightPixels * 0.78f).toInt()
+        )
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
