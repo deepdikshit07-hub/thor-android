@@ -160,6 +160,79 @@ class ThorAiProviderManager(private val context: Context) {
         )
     }
 
+    suspend fun stream(provider: Provider, prompt: String, onChunk: (String) -> Unit, maxTokens: Int = 512): String = withContext(Dispatchers.IO) {
+        val config = settings(provider)
+        require(provider !in listOf(Provider.AUTO, Provider.LOCAL, Provider.GEMINI)) { "This provider uses a different streaming transport." }
+        require(config.apiKey.isNotBlank()) { "Add an API key for " + provider.title + " in AI Provider settings." }
+        val endpoint = config.endpoint.trim().ifBlank { provider.defaultEndpoint }
+        require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
+        val body = if (provider == Provider.CLAUDE) {
+            JSONObject().put("model", config.model).put("max_tokens", maxTokens.coerceIn(64, 1024)).put("stream", true)
+                .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt.take(12000))))
+        } else {
+            JSONObject().put("model", config.model).put("stream", true).put("max_tokens", maxTokens.coerceIn(64, 1024))
+                .put("temperature", 0.7).put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt.take(12000))))
+        }
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 10000; readTimeout = 45000; doOutput = true
+            setRequestProperty("Content-Type", "application/json"); setRequestProperty("Accept", "text/event-stream")
+            if (provider == Provider.CLAUDE) { setRequestProperty("x-api-key", config.apiKey); setRequestProperty("anthropic-version", "2023-06-01") }
+            else setRequestProperty("Authorization", "Bearer " + config.apiKey)
+            if (provider == Provider.OPENROUTER) { setRequestProperty("HTTP-Referer", "https://github.com/deepdikshit07-hub/thor-android"); setRequestProperty("X-Title", "THOR Android Assistant") }
+        }
+        val full = StringBuilder()
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                val raw = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") ?: JSONObject(raw).optString("message") }.getOrNull().orEmpty().take(220).ifBlank { "HTTP " + status }
+                if (status == 429) prefs.edit().putLong("cooldown_until_" + provider.name, System.currentTimeMillis() + 3600000L).apply()
+                throw IllegalStateException(provider.title + " returned HTTP " + status + ": " + detail)
+            }
+            connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                lines.forEach { line ->
+                    if (!line.startsWith("data:")) return@forEach
+                    val data = line.removePrefix("data:").trim()
+                    if (data.isBlank() || data == "[DONE]") return@forEach
+                    val json = runCatching { JSONObject(data) }.getOrNull() ?: return@forEach
+                    val piece = if (provider == Provider.CLAUDE) {
+                        if (json.optString("type") == "content_block_delta") json.optJSONObject("delta")?.optString("text").orEmpty() else ""
+                    } else json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty()
+                    if (piece.isNotEmpty()) { full.append(piece); onChunk(piece) }
+                    if (json.optString("type") == "error") throw IllegalStateException("Provider streaming error.")
+                }
+            }
+            full.toString().takeIf { it.isNotBlank() } ?: error(provider.title + " returned no streamed text.")
+        } finally { connection.disconnect() }
+    }
+
+    data class StreamAnswer(val provider: Provider, val text: String)
+
+    suspend fun streamAutomatically(prompt: String, geminiFirebase: suspend ((String) -> Unit) -> String, onChunk: (String) -> Unit): StreamAnswer {
+        val candidates = buildList { add(Provider.GEMINI); add(Provider.GROQ); add(Provider.GEMINI_API); if (allowMeteredAutoProviders()) { add(Provider.CLAUDE); add(Provider.OPENAI) } }
+        val failures = mutableListOf<String>()
+        for (provider in candidates) {
+            if (provider != Provider.GEMINI && settings(provider).apiKey.isBlank()) continue
+            val received = StringBuilder()
+            try {
+                val answer = when (provider) {
+                    Provider.GEMINI -> geminiFirebase { part -> received.append(part); onChunk(part) }
+                    Provider.GEMINI_API -> ask(provider, prompt).also { received.append(it); onChunk(it) }
+                    else -> stream(provider, prompt, { part -> received.append(part); onChunk(part) })
+                }
+                if (answer.isNotBlank()) return StreamAnswer(provider, answer)
+                failures += provider.title + ": empty response"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                Log.w("THOR_AI_PROVIDER", "Streaming route failed: " + provider.name, error)
+                if (received.isNotEmpty()) throw IllegalStateException(provider.title + " stopped after a partial response. Retry the question.", error)
+                failures += provider.title + ": " + (error.message ?: error.javaClass.simpleName)
+            }
+        }
+        throw IllegalStateException(if (failures.isEmpty()) "No online AI provider is configured. Add a Gemini or Groq API key." else "All configured online providers failed. " + failures.takeLast(4).joinToString("; "))
+    }
+
     suspend fun ask(prompt: String, maxTokens: Int = 192): String =
         ask(settings(), prompt, maxTokens)
 
