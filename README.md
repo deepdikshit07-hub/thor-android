@@ -70,7 +70,7 @@ Never paste a password or access token into chat or commit it into the project.
 
 ## OTA updates
 
-THOR checks the latest GitHub Release when the app starts and also provides a **CHECK FOR UPDATES** button. It downloads the signed APK, verifies the SHA-256 checksum from the release manifest, and opens Android's package installer. Android may ask the user to approve installation.
+THOR checks the latest GitHub Release when the app starts, provides a **CHECK FOR UPDATES** button, and schedules a network-connected background check approximately every six hours. When a newer release is found, THOR posts an Android notification; tapping it opens THOR to review and download the update. The updater verifies the APK SHA-256 checksum and opens Android's package installer. Android requires the user to approve installation, and Android 13+ users must allow THOR notifications for background alerts.
 
 Before publishing the first OTA release:
 
