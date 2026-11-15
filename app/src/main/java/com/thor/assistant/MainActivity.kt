@@ -1564,17 +1564,30 @@ lower.startsWith("অ্যালার্ম ") -> {
             true
         )
         panel.addView(TextView(this).apply {
-            text = "Choose a provider and model. API keys are encrypted with Android Keystore. Provider API billing is separate from ChatGPT subscriptions. Firebase Gemini uses THOR's managed Firebase connection; other providers use your own API key."
+            text = "Automatic mode tries Gemini and configured free-tier providers first, then uses THOR Offline AI. Claude and OpenAI API calls can incur charges and are excluded from automatic mode unless you explicitly allow them. API keys are encrypted with Android Keystore."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             setPadding(0, 12, 0, 4)
         }, matchWrap())
+        val allowMetered = android.widget.CheckBox(this).apply {
+            text = "Allow Claude/OpenAI in automatic mode (may incur API charges)"
+            isChecked = manager.allowMeteredAutoProviders()
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+        }
+        panel.addView(allowMetered, matchWrap())
 
         var previousProvider = current.provider
         fun applyProviderState(provider: ThorAiProviderManager.Provider) {
-            val needsEndpointAndKey = provider != ThorAiProviderManager.Provider.GEMINI &&
-                provider != ThorAiProviderManager.Provider.LOCAL
-            modelField.isEnabled = provider != ThorAiProviderManager.Provider.LOCAL
+            val needsEndpointAndKey = provider !in listOf(
+                ThorAiProviderManager.Provider.GEMINI,
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
+            modelField.isEnabled = provider !in listOf(
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
             endpointField.isEnabled = needsEndpointAndKey
             keyField.isEnabled = needsEndpointAndKey
         }
@@ -1617,6 +1630,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                         endpointField.text.toString(),
                         keyField.text.toString()
                     )
+                    manager.setAllowMeteredAutoProviders(allowMetered.isChecked)
                     Toast.makeText(this, "AI provider and model saved.", Toast.LENGTH_LONG).show()
                 } catch (error: Exception) {
                     Toast.makeText(this, "Could not save provider settings: ${error.message}", Toast.LENGTH_LONG).show()
@@ -1647,6 +1661,27 @@ lower.startsWith("অ্যালার্ম ") -> {
             else -> "Reply in clear English."
         }
         val styleInstruction = "You are THOR, a concise and helpful Android assistant. Answer the user's question directly, match their language and tone, and be accurate.\n$languageInstruction\n${learningMemory.systemContext()}\nUser: $prompt"
+
+        if (selectedProvider == ThorAiProviderManager.Provider.AUTO) {
+            addMessage("THOR", "Finding the fastest available AI provider...")
+            mainScope.launch {
+                try {
+                    val result = providerManager.askAutomatically(styleInstruction) {
+                        if (!firebaseReady) error("Firebase Gemini is not ready.")
+                        GeminiAssistant.ask(styleInstruction, providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model)
+                    }
+                    addMessage("THOR", "${result.text}\n\n— ${result.provider.title}")
+                    speak(result.text)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    android.util.Log.e("THOR_AI_PROVIDER", "Automatic provider routing failed", error)
+                    addMessage("THOR", "Online AI providers are unavailable: ${error.message ?: error.javaClass.simpleName}. Switching to on-device AI.")
+                    askLocalOrFallback(prompt)
+                }
+            }
+            return
+        }
 
         if (selectedProvider != ThorAiProviderManager.Provider.GEMINI) {
             addMessage("THOR", "Connecting to ${selectedProvider.title}...")
