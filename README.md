@@ -77,7 +77,7 @@ Before publishing the first OTA release:
 1. Create one permanent Android release keystore and keep a secure offline backup.
 2. Add these four GitHub Actions repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
 3. Confirm that the release keystore certificate matches the certificate on currently installed THOR builds.
-4. Only after the signing identity is confirmed, publish a version tag such as `v2.1.0`.
+4. Only after the signing identity is confirmed and the PR is approved, merge it into `main`. The release workflow then builds and publishes a uniquely versioned OTA release automatically.
 
 The current debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
 
