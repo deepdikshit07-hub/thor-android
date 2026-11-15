@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.media.AudioFormat
+import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.view.KeyEvent
 import android.speech.RecognitionListener
@@ -22,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -75,7 +79,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
     private var wakeRecognizer: SpeechRecognizer? = null
-    private var tapRecognizer: SpeechRecognizer? = null
+    private lateinit var speechEngine: ThorSpeechEngine
+    @Volatile private var tapRecording = false
+    private var tapRecordingJob: kotlinx.coroutines.Job? = null
     private val wakeHandler = Handler(Looper.getMainLooper())
     private var wakeEnabled = false
     private var waitingForWakeCommand = false
@@ -249,6 +255,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
+        speechEngine = ThorSpeechEngine(applicationContext)
         updateManager = ThorUpdateManager(this)
         schedulePeriodicUpdateChecks()
         requestUpdateNotificationPermission()
@@ -1031,75 +1038,152 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun startVoiceInput() {
+        if (tapRecording) {
+            // A second tap ends capture; transcription still runs locally on the captured audio.
+            tapRecording = false
+            addMessage("THOR", "Finishing the recording and transcribing locally...")
+            return
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1001)
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            addMessage("THOR", "No compatible speech-recognition service is installed or enabled on this device. Enable an Android speech service, then try again.")
-            return
+
+        stopWakeWord()
+        wakeButton?.text = "WAKE: OFF"
+        tapRecording = true
+        tapRecordingJob = mainScope.launch {
+            try {
+                if (!speechEngine.isInstalled()) {
+                    addMessage("THOR", "Preparing THOR's offline speech recognition. The first download is about 100 MB; after that, speech recognition works without Google or an internet connection.")
+                    speechEngine.ensureInstalled { downloaded, total ->
+                        val percent = if (total > 0L) ((downloaded * 100L) / total).toInt().coerceIn(0, 100) else 0
+                        runOnUiThread {
+                            if (tapRecording && !isFinishing && !isDestroyed) {
+                                addMessage("THOR", "Offline speech model download: $percent%")
+                            }
+                        }
+                    }
+                }
+                if (!tapRecording) return@launch
+
+                addMessage("THOR", "Offline speech recognition is ready. Listening now. Tap the microphone again to finish.")
+                val samples = withContext(Dispatchers.IO) { captureVoiceSamples() }
+                if (samples.size < 8_000) {
+                    addMessage("THOR", "I didn't hear enough speech. Tap the microphone and try again.")
+                    return@launch
+                }
+
+                addMessage("THOR", "Transcribing on this device...")
+                val languageCode = when (language.selectedItemPosition) {
+                    1 -> "hi"
+                    2 -> "bn"
+                    else -> "en"
+                }
+                val spoken = withContext(Dispatchers.IO) {
+                    speechEngine.transcribe(samples, languageCode)
+                }
+                if (spoken.isNotBlank()) handleCommand(spoken)
+                else addMessage("THOR", "I couldn't make out the words. Please try speaking a little more clearly.")
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                android.util.Log.e("THOR_MIC", "Local speech recognition failed", error)
+                addMessage("THOR", "THOR's offline microphone could not complete: ${error.message ?: error.javaClass.simpleName}. Please retry.")
+            } finally {
+                tapRecording = false
+                releaseDirectAudioRecord()
+                tapRecordingJob = null
+            }
         }
+    }
+
+    /**
+     * Captures 16 kHz mono PCM directly with AudioRecord. A short silence ends
+     * the utterance automatically; a second tap can also stop capture.
+     */
+    private fun captureVoiceSamples(): FloatArray {
+        val sampleRate = 16_000
+        val chunkSamples = 1_600 // 100 ms
+        val minBuffer = AudioRecord.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        check(minBuffer > 0) { "Android could not initialize the microphone audio format." }
+
+        val recorder = AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            maxOf(minBuffer, chunkSamples * 2)
+        )
+        check(recorder.state == AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
+            "Android could not open the microphone. Check microphone permission and privacy settings."
+        }
+
+        val output = FloatArray(sampleRate * 30)
+        val buffer = ShortArray(chunkSamples)
+        var written = 0
+        var speechDetected = false
+        var quietChunks = 0
+        val startedAt = System.currentTimeMillis()
+        directAudioRecord = recorder
+
         try {
-            tapRecognizer?.cancel()
-            tapRecognizer?.destroy()
-            tapRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext).also { recognizer ->
-                recognizer.setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        addMessage("THOR", "Listening. Speak now.")
-                    }
-                    override fun onBeginningOfSpeech() = Unit
-                    override fun onRmsChanged(rmsdB: Float) = Unit
-                    override fun onBufferReceived(buffer: ByteArray?) = Unit
-                    override fun onEndOfSpeech() = Unit
-                    override fun onPartialResults(partialResults: Bundle?) = Unit
-                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
-                    override fun onError(error: Int) {
-                        android.util.Log.e("THOR_MIC", "Tap recognition error=$error")
-                        addMessage("THOR", speechErrorMessage(error))
-                        stopTapRecognition()
-                    }
-                    override fun onResults(results: Bundle?) {
-                        val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                            ?.firstOrNull()?.trim()
-                        stopTapRecognition()
-                        if (!spoken.isNullOrBlank()) handleCommand(spoken)
-                        else addMessage("THOR", "I didn't catch that. Please try again.")
-                    }
-                })
+            recorder.startRecording()
+            while (tapRecording && written < output.size) {
+                val count = recorder.read(buffer, 0, buffer.size)
+                if (count < 0) {
+                    if (!tapRecording) break
+                    error("Microphone audio capture stopped unexpectedly (code $count).")
+                }
+                if (count == 0) continue
+
+                var energy = 0.0
+                for (index in 0 until count) {
+                    val value = buffer[index].toFloat()
+                    energy += value * value
+                    output[written++] = value / 32768.0f
+                }
+                val rms = kotlin.math.sqrt(energy / count)
+                if (rms >= 520.0) {
+                    speechDetected = true
+                    quietChunks = 0
+                } else if (speechDetected) {
+                    quietChunks++
+                }
+
+                // End after 1.2 seconds of quiet, or after 12 seconds if nobody speaks.
+                if (speechDetected && quietChunks >= 12) break
+                if (!speechDetected && System.currentTimeMillis() - startedAt >= 12_000L) break
             }
-            val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
-            val request = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                // Start listening inside THOR; do not launch the external Google recognition activity.
-            }
-            tapRecognizer?.startListening(request)
-        } catch (error: Exception) {
-            android.util.Log.e("THOR_MIC", "Could not start tap recognition", error)
-            stopTapRecognition()
-            addMessage("THOR", "Microphone could not start: ${error.message ?: error.javaClass.simpleName}. Check that another app is not using the microphone.")
+        } finally {
+            if (directAudioRecord === recorder) directAudioRecord = null
+            try {
+                if (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) recorder.stop()
+            } catch (_: Exception) {}
+            recorder.release()
+        }
+        return output.copyOf(written)
+    }
+
+    @Volatile
+    private var directAudioRecord: AudioRecord? = null
+
+    private fun releaseDirectAudioRecord() {
+        // Capture owns the recorder and releases it in its own finally block.
+        // This method intentionally only clears a stale reference.
+        if (directAudioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            directAudioRecord = null
         }
     }
 
     private fun stopTapRecognition() {
-        try { tapRecognizer?.cancel() } catch (_: Exception) {}
-        try { tapRecognizer?.destroy() } catch (_: Exception) {}
-        tapRecognizer = null
-    }
-
-    private fun speechErrorMessage(error: Int): String = when (error) {
-        SpeechRecognizer.ERROR_AUDIO -> "The speech service could not access microphone audio. Check Android's microphone privacy switch and close other apps using the mic."
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Android denied microphone access to THOR. Allow Microphone in App info → Permissions."
-        SpeechRecognizer.ERROR_CLIENT -> "The speech service stopped unexpectedly. Close and reopen THOR, then retry."
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
-        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
-            "The speech service is unavailable. Check internet access or install its required language pack."
-        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
-            "This speech service does not support the selected language. Try another language or install its speech pack."
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Another app or recognition session is using the speech service. Wait a moment and retry."
-        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I couldn't hear clear speech. Please try again."
-        else -> "Speech recognition failed (error $error). Check the device's speech service and microphone permissions."
+        tapRecording = false
+        tapRecordingJob?.cancel()
+        releaseDirectAudioRecord()
     }
 
     private fun handleCommand(raw: String) {
@@ -1821,6 +1905,7 @@ private fun launchIntent(
     override fun onDestroy() {
         stopTapRecognition()
         stopWakeWord()
+        speechEngine.close()
         try { bossRecorder?.stop() } catch (_: Exception) {}
         bossRecorder?.release()
         bossRecorder = null
