@@ -65,6 +65,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var bossSetupDialog: AlertDialog? = null
     private var pendingBossVoiceEnrollment = false
     private lateinit var offlineAi: ThorOfflineAi
+    private lateinit var updateManager: ThorUpdateManager
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
@@ -84,11 +85,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
+        updateManager = ThorUpdateManager(this)
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isFinishing && !isDestroyed) checkForUpdates(silent = true)
+        }, 12_000L)
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
@@ -99,6 +104,39 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 } catch (error: Exception) {
                     offlineAiButton?.text = "RETRY OFFLINE AI"
                     addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
+                }
+            }
+        }
+    }
+
+    private fun checkForUpdates(silent: Boolean) {
+        mainScope.launch {
+            try {
+                val update = updateManager.checkForUpdate()
+                if (update == null) {
+                    if (!silent) addMessage("THOR", "THOR is already up to date.")
+                    return@launch
+                }
+                val builder = AlertDialog.Builder(this@MainActivity)
+                    .setTitle("THOR update available: ${update.versionName}")
+                    .setMessage("${update.releaseNotes}\n\nDownload and install this update?")
+                    .setPositiveButton("Download update") { _, _ ->
+                        mainScope.launch {
+                            try {
+                                addMessage("THOR", "Downloading THOR ${update.versionName}...")
+                                val apk = updateManager.download(update)
+                                addMessage("THOR", "Download verified. Opening Android's installer.")
+                                updateManager.install(apk)
+                            } catch (error: Exception) {
+                                addMessage("THOR", "Update failed: ${error.message ?: error.javaClass.simpleName}")
+                            }
+                        }
+                    }
+                if (!update.mandatory) builder.setNegativeButton("Later", null)
+                builder.setCancelable(!update.mandatory).show()
+            } catch (error: Exception) {
+                if (!silent) {
+                    addMessage("THOR", "Couldn't check for updates: ${error.message ?: error.javaClass.simpleName}")
                 }
             }
         }
@@ -256,6 +294,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         offlineAiButton = offlineButton
         offlineButton.setOnClickListener { installOfflineAi() }
         root.addView(offlineButton, matchWrap())
+
+        val updateButton = makeButton("CHECK FOR UPDATES")
+        updateButton.setOnClickListener { checkForUpdates(silent = false) }
+        root.addView(updateButton, matchWrap())
 
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
