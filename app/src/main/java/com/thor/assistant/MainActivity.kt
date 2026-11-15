@@ -102,6 +102,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             "Personalize appearance",
             "Offline AI",
             "Language and voice",
+            if (wakeEnabled) "Turn wake word off" else "Turn wake word on",
             "Check for updates",
             "Help and commands"
         )
@@ -112,8 +113,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     0 -> showThemeChooser()
                     1 -> installOfflineAi()
                     2 -> showLanguageVoiceInfo()
-                    3 -> checkForUpdates(silent = false)
-                    4 -> addMessage("THOR", helpText())
+                    3 -> {
+                        val button = wakeButton ?: makeButton("WAKE: OFF").also { wakeButton = it }
+                        toggleWakeWord(button)
+                    }
+                    4 -> checkForUpdates(silent = false)
+                    5 -> addMessage("THOR", helpText())
                 }
             }
             .setNegativeButton("Close", null)
@@ -148,10 +153,49 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun showLanguageVoiceInfo() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+        panel.addView(TextView(this).apply {
+            text = "Language"
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        val languageChoice = Spinner(this)
+        languageChoice.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, languages)
+        languageChoice.setSelection(getSharedPreferences("thor_preferences", MODE_PRIVATE).getInt("language", 0).coerceIn(0, languages.lastIndex))
+        panel.addView(languageChoice, matchWrap())
+        panel.addView(TextView(this).apply {
+            text = "Voice style"
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        val voiceChoice = Spinner(this)
+        voiceChoice.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
+        voiceChoice.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        panel.addView(voiceChoice, matchWrap())
         AlertDialog.Builder(this)
-            .setTitle("Language and voice")
-            .setMessage("Choose English, Hindi or Bengali in the Language selector. Choose your preferred voice style in Voice, then use Preview Voice to hear it.")
-            .setPositiveButton("Got it", null)
+            .setTitle("Language & voice")
+            .setView(panel)
+            .setNeutralButton("Preview") { _, _ ->
+                val lang = languageChoice.selectedItemPosition
+                val sample = when (lang) {
+                    1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
+                    2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
+                    else -> "Hello. I am THOR. I am ready to help."
+                }
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", voiceChoice.selectedItemPosition).apply()
+                getSharedPreferences("thor_preferences", MODE_PRIVATE).edit().putInt("language", lang).apply()
+                speak(sample)
+            }
+            .setPositiveButton("Save") { _, _ ->
+                getSharedPreferences("thor_preferences", MODE_PRIVATE).edit().putInt("language", languageChoice.selectedItemPosition).apply()
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", voiceChoice.selectedItemPosition).apply()
+                applyVoiceStyle()
+                Toast.makeText(this, "Language and voice preferences saved", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
@@ -611,6 +655,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(ivory)
         }
         input = EditText(this)
+        language = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, languages)
+            setSelection(getSharedPreferences("thor_preferences", MODE_PRIVATE).getInt("language", 0).coerceIn(0, languages.lastIndex))
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    getSharedPreferences("thor_preferences", MODE_PRIVATE).edit().putInt("language", position).apply()
+                }
+            }
+        }
+        voiceStyle = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
+            setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        }
+        wakeButton = makeButton(if (wakeEnabled) "WAKE: ON" else "WAKE: OFF")
         offlineAiButton = makeButton("Install offline AI")
         setContentView(root)
     }
