@@ -1667,7 +1667,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
 
         if (!firebaseReady) {
-            addMessage("THOR", "Firebase Gemini is not ready: ${firebaseInitError ?: "check Firebase setup"}. Switching to on-device AI.")
+            addMessage("THOR", "Firebase Gemini is not ready. Check Firebase setup and App Check. Switching to on-device AI.")
             askLocalOrFallback(prompt)
             return
         }
