@@ -330,7 +330,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(dp(16), dp(14), dp(16), dp(12))
             background = android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.rgb(7, 13, 24), Color.rgb(10, 20, 34), Color.rgb(5, 10, 19))
+                intArrayOf(Color.rgb(17, 18, 21), Color.rgb(28, 29, 33), Color.rgb(10, 11, 14))
             )
         }
 
@@ -345,8 +345,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             textSize = 27f
             letterSpacing = 0.20f
             typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
-            setTextColor(Color.rgb(224, 246, 255))
-            setShadowLayer(dp(12).toFloat(), 0f, 0f, Color.rgb(43, 178, 230))
+            setTextColor(Color.rgb(241, 240, 236))
+            setShadowLayer(dp(5).toFloat(), 0f, 0f, Color.rgb(173, 137, 78))
         }
         brandColumn.addView(title, matchWrap())
         val subtitle = TextView(this).apply {
@@ -374,7 +374,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(14), dp(12), dp(14), dp(10))
-            background = glassDrawable(0xB51A2A3D.toInt(), 0x55B8E8FF, 28f)
+            background = glassDrawable(0xB526272B.toInt(), 0x66D5C5A4, 28f)
             elevation = dp(5).toFloat()
         }
         val reactorTitle = TextView(this).apply {
@@ -382,14 +382,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             textSize = 10f
             letterSpacing = 0.25f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(131, 211, 242))
+            setTextColor(Color.rgb(213, 197, 164))
         }
         hero.addView(reactorTitle, matchWrap())
         hero.addView(ThorHudView(this), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(164)
         ))
         val credit = TextView(this).apply {
-            text = "EMBLEM ENGINEERED & DEVELOPED BY\nAURITH ADHIKARI  •  DEEP DIXIT"
+            text = "EMBLEM ENGINEERED & DEVELOPED BY\nARITRA ADHIKARY  •  DEEP DIXIT"
             textSize = 8.5f
             letterSpacing = 0.08f
             gravity = Gravity.CENTER
@@ -403,7 +403,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val settingsCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(8))
-            background = glassDrawable(0x99152233.toInt(), 0x33D5F0FF, 22f)
+            background = glassDrawable(0x9924262A.toInt(), 0x33E4D8C4, 22f)
         }
         val languageLabel = TextView(this).apply {
             text = "LANGUAGE"
@@ -419,7 +419,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             languages
         )
         language.setPadding(dp(10), dp(2), dp(10), dp(2))
-        language.background = glassDrawable(0xAA26384B.toInt(), 0x4479CDEB, 14f)
+        language.background = glassDrawable(0xAA34363B.toInt(), 0x447F7B72, 14f)
         settingsCard.addView(language, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(44)
         ).apply { bottomMargin = dp(8) })
@@ -450,7 +450,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
         voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
-        voiceStyle.background = glassDrawable(0xAA1B2A3B.toInt(), 0x4479CDEB, 16f)
+        voiceStyle.background = glassDrawable(0xAA34363B.toInt(), 0x447F7B72, 16f)
         voiceStyle.setPadding(dp(8), 0, dp(8), 0)
         voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
@@ -475,7 +475,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val chatPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(9), dp(12), dp(8))
-            background = glassDrawable(0xAA101D2D.toInt(), 0x44A6DFFF, 22f)
+            background = glassDrawable(0xAA202226.toInt(), 0x44D9CFBC, 22f)
         }
         val chatHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -518,7 +518,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(5), dp(4), dp(5), dp(4))
-            background = glassDrawable(0xCC1A293A.toInt(), 0x6686D9F5, 24f)
+            background = glassDrawable(0xCC303238.toInt(), 0x668C887E, 24f)
         }
         input = EditText(this).apply {
             hint = "Message THOR..."
@@ -532,7 +532,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         composer.addView(input, LinearLayout.LayoutParams(0, dp(48), 1f))
         val send = makeButton("SEND")
-        send.background = glassRipple(0xFF167CA5.toInt(), 0x997BE7FF, 20f)
+        send.background = glassRipple(0xFF3A3B40.toInt(), 0x66D9B978.toInt(), 20f)
         send.setOnClickListener {
             val command = input.text.toString().trim()
             if (command.isNotEmpty()) {
@@ -587,7 +587,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         return android.graphics.drawable.RippleDrawable(
             android.content.res.ColorStateList.valueOf(ripple),
-            glassDrawable(fill, 0x887BD9F4, radiusDp),
+            glassDrawable(fill, 0x887BD9F4.toInt(), radiusDp),
             mask
         )
     }
@@ -608,9 +608,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         isAllCaps = false
         minHeight = dp(42)
         setPadding(dp(8), dp(4), dp(8), dp(4))
-        setTextColor(Color.rgb(220, 242, 252))
+        setTextColor(Color.rgb(242, 240, 234))
         typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
-        background = glassRipple()
+        background = glassRipple(0xCC303238.toInt(), 0x55D9C9A8.toInt(), 22f)
         stateListAnimator = null
         elevation = dp(2).toFloat()
     }
