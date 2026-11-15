@@ -53,7 +53,6 @@ android {
 
 dependencies {
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
-    implementation(files("libs/sherpa-onnx-2.0.1-arm64.aar"))
     implementation("com.google.firebase:firebase-ai")
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
