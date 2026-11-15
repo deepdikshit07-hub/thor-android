@@ -1663,7 +1663,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         val styleInstruction = "You are THOR, a concise and helpful Android assistant. Answer the user's question directly, match their language and tone, and be accurate.\n$languageInstruction\n${learningMemory.systemContext()}\nUser: $prompt"
 
         if (selectedProvider == ThorAiProviderManager.Provider.AUTO) {
-            addMessage("THOR", "Finding the fastest available AI provider...")
+            addMessage("THOR", "Checking available AI providers...")
             mainScope.launch {
                 try {
                     val result = providerManager.askAutomatically(styleInstruction) {
