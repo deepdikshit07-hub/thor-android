@@ -124,7 +124,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
-        val request = PeriodicWorkRequestBuilder<ThorUpdateCheckWorker>(6, java.util.concurrent.TimeUnit.HOURS)
+        val request = PeriodicWorkRequestBuilder<ThorUpdateCheckWorker>(1, java.util.concurrent.TimeUnit.HOURS)
             .setConstraints(constraints)
             .build()
         WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
