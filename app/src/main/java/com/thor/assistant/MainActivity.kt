@@ -1578,6 +1578,27 @@ lower.startsWith("অ্যালার্ম ") -> {
             textSize = 12f
         }
         panel.addView(allowMetered, matchWrap())
+        val testConnection = Button(this).apply {
+            text = "TEST ONLINE CONNECTION"
+            setOnClickListener {
+                isEnabled = false
+                text = "TESTING..."
+                mainScope.launch {
+                    try {
+                        val result = manager.streamAutomatically("Reply with only the word OK.",
+                            geminiFirebase = { emit ->
+                                if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
+                                GeminiAssistant.stream("Reply with only the word OK.", manager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
+                            },
+                            onChunk = {})
+                        Toast.makeText(this@MainActivity, "Online AI verified: " + result.provider.title, Toast.LENGTH_LONG).show()
+                    } catch (error: Exception) {
+                        Toast.makeText(this@MainActivity, "Online test failed: " + (error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
+                    } finally { runOnUiThread { isEnabled = true; text = "TEST ONLINE CONNECTION" } }
+                }
+            }
+        }
+        panel.addView(testConnection, matchWrap())
 
         var previousProvider = current.provider
         fun applyProviderState(provider: ThorAiProviderManager.Provider) {
