@@ -44,7 +44,12 @@ jobs:
       # The 586 MB LiteRT model is intentionally NOT bundled into the APK.
       # ThorOfflineAi already downloads it on demand into private app storage.
       - name: Build lightweight debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        run: |
+          VERSION_CODE="$GITHUB_RUN_ID"
+          VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
+          gradle --no-daemon :app:assembleDebug \
+            -PthorVersionCode="$VERSION_CODE" \
+            -PthorVersionName="$VERSION_NAME"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
