@@ -47,7 +47,8 @@ jobs:
       # ThorOfflineAi downloads it on demand into private app storage.
       - name: Build lightweight debug APK
         run: |
-          VERSION_CODE="$GITHUB_RUN_ID"
+          VERSION_CODE="$((GITHUB_RUN_ID % 2000000000))"
+          if [ "$VERSION_CODE" -lt 1 ]; then VERSION_CODE=1; fi
           VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
           gradle --no-daemon :app:assembleDebug \
             -PthorVersionCode="$VERSION_CODE" \
