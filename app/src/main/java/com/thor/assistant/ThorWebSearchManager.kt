@@ -1,11 +1,12 @@
 package com.thor.assistant
 
-import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
@@ -44,33 +45,54 @@ object ThorWebSearchManager {
                 error("Search provider returned HTTP " + status +
                     if (detail.isBlank()) "." else ": " + detail)
             }
-
             val html = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
-            val document = Jsoup.parse(html)
-            val nodes = document.select("div.result, article[data-testid=result]")
-            val found = LinkedHashMap<String, Result>()
-
-            for (node in nodes) {
-                val link = node.selectFirst("a.result__a, a[data-testid=result-title-a], .result__title a")
-                    ?: continue
-                val title = link.text().trim()
-                val rawHref = link.absUrl("href").ifBlank { link.attr("href") }.trim()
-                if (title.isBlank() || rawHref.isBlank()) continue
-
-                val parsed = Uri.parse(if (rawHref.startsWith("//")) "https:" + rawHref else rawHref)
-                val destination = parsed.getQueryParameter("uddg")?.takeIf { it.isNotBlank() } ?: rawHref
-                val safeUri = Uri.parse(destination)
-                if (safeUri.scheme != "https" || safeUri.host.isNullOrBlank()) continue
-                if (safeUri.host!!.contains("duckduckgo.com", ignoreCase = true)) continue
-
-                val snippet = node.selectFirst(".result__snippet, [data-result=snippet], .result-snippet")
-                    ?.text()?.trim().orEmpty()
-                found.putIfAbsent(destination, Result(title, destination, snippet))
-                if (found.size >= limit.coerceIn(1, 10)) break
-            }
-            found.values.toList()
+            parseResults(html, limit)
         } finally {
             connection.disconnect()
         }
+    }
+
+    /** Pure HTML parser so the result filtering can be verified in local unit tests. */
+    internal fun parseResults(html: String, limit: Int = 8): List<Result> {
+        val document = Jsoup.parse(html)
+        val nodes = document.select("div.result, article[data-testid=result]")
+        val found = LinkedHashMap<String, Result>()
+
+        for (node in nodes) {
+            val link = node.selectFirst("a.result__a, a[data-testid=result-title-a], .result__title a")
+                ?: continue
+            val title = link.text().trim()
+            val rawHref = link.absUrl("href").ifBlank { link.attr("href") }.trim()
+            if (title.isBlank() || rawHref.isBlank()) continue
+
+            val normalizedHref = if (rawHref.startsWith("//")) "https:" + rawHref else rawHref
+            val redirectUri = runCatching { URI(normalizedHref) }.getOrNull() ?: continue
+            val destination = queryParameters(redirectUri.rawQuery)["uddg"]?.takeIf { it.isNotBlank() }
+                ?: normalizedHref
+            val safeUri = runCatching { URI(destination) }.getOrNull() ?: continue
+            val host = safeUri.host ?: continue
+            if (!safeUri.scheme.equals("https", ignoreCase = true)) continue
+            if (host.equals("duckduckgo.com", ignoreCase = true) ||
+                host.endsWith(".duckduckgo.com", ignoreCase = true)) continue
+
+            val snippet = node.selectFirst(".result__snippet, [data-result=snippet], .result-snippet")
+                ?.text()?.trim().orEmpty()
+            found.putIfAbsent(destination, Result(title, destination, snippet))
+            if (found.size >= limit.coerceIn(1, 10)) break
+        }
+        return found.values.toList()
+    }
+
+    private fun queryParameters(rawQuery: String?): Map<String, String> {
+        if (rawQuery.isNullOrBlank()) return emptyMap()
+        return rawQuery.split('&').mapNotNull { item ->
+            val parts = item.split('=', limit = 2)
+            if (parts.size != 2) return@mapNotNull null
+            val key = runCatching { URLDecoder.decode(parts[0], StandardCharsets.UTF_8.name()) }.getOrNull()
+                ?: return@mapNotNull null
+            val value = runCatching { URLDecoder.decode(parts[1], StandardCharsets.UTF_8.name()) }.getOrNull()
+                ?: return@mapNotNull null
+            key to value
+        }.toMap()
     }
 }
