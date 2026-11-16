@@ -102,7 +102,7 @@ class ThorLiveSession(
                 "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" +
                     java.net.URLEncoder.encode(credential, "UTF-8")
             } else {
-                "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=" +
+                "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=" +
                     java.net.URLEncoder.encode(credential, "UTF-8")
             }
             val request = Request.Builder().url(socketUrl).build()
