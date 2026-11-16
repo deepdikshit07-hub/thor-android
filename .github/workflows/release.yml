@@ -38,19 +38,19 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
-      - name: Compile debug APK before publishing
+      - name: Run Android quality gates and compile debug APK
         shell: bash
         run: |
           for attempt in 1 2 3; do
-            if gradle --no-daemon :app:assembleDebug; then
+            if gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug; then
               exit 0
             fi
             if [ "$attempt" -lt 3 ]; then
-              echo "Debug validation attempt $attempt failed; retrying after dependency-service backoff."
+              echo "Android validation attempt $attempt failed; retrying after dependency-service backoff."
               sleep $((attempt * 30))
             fi
           done
-          echo "::error::Debug APK validation failed after three attempts."
+          echo "::error::Android lint, unit tests or debug APK validation failed after three attempts."
           exit 1
 
   release:
