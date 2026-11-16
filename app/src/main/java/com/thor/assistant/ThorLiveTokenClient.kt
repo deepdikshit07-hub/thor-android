@@ -27,10 +27,11 @@ class ThorLiveTokenClient {
                 uri.rawFragment == null &&
                 uri.path.orEmpty().trimEnd('/').isEmpty()
         ) {
-            "Configure a valid HTTPS THOR Live Worker URL in Live Mode settings."
+            "Configure your HTTPS Cloudflare Worker URL once in Settings → Remote Master Mode."
         }
-        val user = FirebaseAuth.getInstance().currentUser
-            ?: error("Sign in to your THOR Firebase account before starting Live Mode.")
+        val auth = FirebaseAuth.getInstance()
+        val user = auth.currentUser ?: Tasks.await(auth.signInAnonymously()).user
+            ?: error("THOR could not establish a secure Firebase session for Live Mode. Enable Anonymous sign-in in Firebase Authentication.")
         val idToken = Tasks.await(user.getIdToken(true)).token
             ?: error("Firebase did not provide a sign-in token.")
         val connection = URL("$base/v1/live-token").openConnection() as HttpURLConnection
