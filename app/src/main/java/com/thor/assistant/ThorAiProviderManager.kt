@@ -35,6 +35,8 @@ class ThorAiProviderManager(private val context: Context) {
         CLAUDE("Claude (Anthropic API)", "claude-haiku-5-5", "https://api.anthropic.com/v1/messages"),
         OPENAI("OpenAI / ChatGPT API", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions"),
         OPENROUTER("OpenRouter", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
+        DEEPSEEK("DeepSeek", "deepseek-flash", "https://api.deepseek.com/chat/completions"),
+        MISTRAL("Mistral AI", "mistral-small-latest", "https://api.mistral.ai/v1/chat/completions"),
         CLOUDFLARE("Cloudflare Workers AI", "@cf/meta/llama-3.1-8b-instruct", ""),
         CUSTOM("Custom OpenAI-compatible API", "", ""),
         LOCAL("On-device AI only", "", "")
