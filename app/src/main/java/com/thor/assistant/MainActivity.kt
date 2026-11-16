@@ -733,32 +733,18 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1006)
             return
         }
-        // Reuse the one Gemini key saved in AI Provider settings; Live Mode has no
-        // separate Worker URL or Firebase sign-in setup.
-        val apiKey = ThorAiProviderManager(this)
-            .settings(ThorAiProviderManager.Provider.GEMINI_API).apiKey
-        if (apiKey.isBlank()) {
-            liveStatusText?.text = "GEMINI API KEY REQUIRED"
-            liveCaptionText?.text = "Add your Gemini API key in Settings → AI Provider, choose Google Gemini (own API key), and save."
-            Toast.makeText(
-                this,
-                "Add your Gemini API key in Settings → AI Provider. The same saved key powers chat and Live Mode.",
-                Toast.LENGTH_LONG
-            ).show()
-            return
-        }
-        beginThorLiveSession(apiKey)
-    }
-
-    private fun beginThorLiveSession(apiKey: String) {
-        if (liveSession != null || isFinishing || isDestroyed) return
-        if (isBackgroundWakeEnabled()) stopBackgroundWakeService()
         val voiceName = when (voiceStyle.selectedItemPosition) {
             1 -> "Aoede"
             2 -> "Kore"
             3 -> "Charon"
             else -> "Charon"
         }
+        beginThorLiveSession(voiceName)
+    }
+
+    private fun beginThorLiveSession(voiceName: String) {
+        if (liveSession != null || isFinishing || isDestroyed) return
+        if (isBackgroundWakeEnabled()) stopBackgroundWakeService()
         val languageName = when (language.selectedItemPosition) {
             1 -> "Hindi"
             2 -> "Bengali"
@@ -781,7 +767,6 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
             }
 
             override fun onTranscript(speaker: String, text: String) {
-                // Only the latest caption is rendered; no transcript list or database writes.
                 if (liveChatEnabled) liveCaptionText?.text = "$speaker  •  $text"
             }
 
@@ -791,17 +776,22 @@ class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
         })
         liveSession = session
         liveToggleButton?.text = "CONNECTING..."
-        liveStatusText?.text = "SECURING LIVE CONNECTION"
+        liveStatusText?.text = "REQUESTING SECURE LIVE ACCESS"
+        liveCaptionText?.text = "Preparing a short-lived encrypted session token..."
         mainScope.launch {
             try {
-                session.start(apiKey, voiceName, languageName)
+                val token = ThorLiveTokenClient().create(masterApprovalClient.baseUrl, voiceName)
+                liveStatusText?.text = "CONNECTING TO GEMINI LIVE"
+                session.start(token, voiceName, languageName)
             } catch (error: Exception) {
                 if (liveSession === session) liveSession = null
+                session.stop()
                 liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
                 liveStatusText?.text = "LIVE MODE UNAVAILABLE"
                 liveToggleButton?.text = "START LIVE SESSION"
                 liveCaptionText?.text = error.message ?: "Could not start the live session."
                 restartBackgroundWakeServiceIfEnabled()
+                android.util.Log.e("THOR_LIVE", "Secure Live session could not start", error)
             }
         }
     }
@@ -2203,7 +2193,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             true
         )
         val help = TextView(this).apply {
-            text = "Firebase Gemini uses THOR's managed connection. Your saved Google Gemini API key is shared by Gemini chat and Live Mode, so Live Mode needs no separate Worker URL or Firebase sign-in. OpenAI uses your own API key; API billing is separate from ChatGPT subscriptions. Groq and OpenRouter use standard endpoints. Cloudflare/custom need a full HTTPS chat-completions endpoint. Provider quotas and charges still apply."
+            text = "THOR Live Mode uses the secured Cloudflare Worker and a short-lived Gemini session token. It does not expose a permanent Gemini API key in the app. Configure the Worker once under Remote Master Mode. OpenAI uses your own API key; API billing is separate from ChatGPT subscriptions. Groq and OpenRouter use standard endpoints. Cloudflare/custom need a full HTTPS chat-completions endpoint. Provider quotas and charges still apply."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             setPadding(0, 10, 0, 4)
