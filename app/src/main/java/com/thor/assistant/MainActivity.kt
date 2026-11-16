@@ -2010,7 +2010,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                             } else {
                                 " The offline model is not installed, so only THOR's limited built-in fallback is available."
                             }
-                            chat.append("Online AI unavailable: " + reason + "." + appCheckHint + fallbackStatus + "\\n\\n")
+                            chat.append("Online AI unavailable: " + reason + "." + appCheckHint + fallbackStatus + "\n\n")
                             activeAiReply = false
                             askLocalOrFallback(prompt)
                         } else {
