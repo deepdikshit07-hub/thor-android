@@ -88,7 +88,8 @@ jobs:
         shell: bash
         run: |
           VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
-          VERSION_CODE="$GITHUB_RUN_ID"
+          VERSION_CODE="$((GITHUB_RUN_ID % 2000000000))"
+          if [ "$VERSION_CODE" -lt 1 ]; then VERSION_CODE=1; fi
           TAG_NAME="v${VERSION_NAME}"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
