@@ -89,7 +89,7 @@ class ThorAiProviderManager(private val context: Context) {
     fun settings(forProvider: Provider? = null): Settings {
         val provider = forProvider ?: runCatching {
             Provider.valueOf(prefs.getString("provider", Provider.AUTO.name) ?: Provider.AUTO.name)
-        }.getOrDefault(Provider.CHATGPT_ACCOUNT)
+        }.getOrDefault(Provider.AUTO)
         val suffix = provider.name
         val savedModel = prefs.getString("model_$suffix", null)
         // Gemini now limits 2.5 model access for newly created projects.
