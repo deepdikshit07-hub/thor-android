@@ -52,11 +52,13 @@ class ThorChatGPTAccountManager(private val context: Context) {
         }
 
     fun status(): AccountStatus {
-        val token = decrypt(prefs.getString("access_token", null))
-        val scopes = prefs.getString("scope", "").orEmpty().split(' ').toSet()
+        val accessToken = decrypt(prefs.getString("access_token", null))
+        val idToken = decrypt(prefs.getString("id_token", null))
+        val scopes = prefs.getString("scope", "").orEmpty().split(' ').filter { it.isNotBlank() }.toSet()
         return AccountStatus(
-            connected = !token.isNullOrBlank() && prefs.getString("client_id", null) != null,
-            planUsageEnabled = scopes.contains("chatgpt.tokens.use.direct") && scopes.contains("resource.invoke"),
+            connected = !idToken.isNullOrBlank() && !prefs.getString("client_id", null).isNullOrBlank(),
+            planUsageEnabled = !accessToken.isNullOrBlank() &&
+                scopes.contains("chatgpt.tokens.use.direct") && scopes.contains("resource.invoke"),
             email = prefs.getString("email", "").orEmpty()
         )
     }
@@ -183,24 +185,35 @@ class ThorChatGPTAccountManager(private val context: Context) {
             if (existingClient != null && !previousSubject.isNullOrBlank() && identity.optString("sub") != previousSubject) {
                 error("The ChatGPT account changed during reconnection. Your saved connection was not replaced.")
             }
-            val scope = token.optString("scope").ifBlank { error("OpenAI did not return the approved permissions.") }
-            val granted = scope.split(' ').toSet()
-            if (!granted.contains("resource.invoke") || !granted.contains("chatgpt.tokens.use.direct")) {
-                error("ChatGPT sign-in succeeded, but permission to use your ChatGPT plan was not granted. Reconnect and approve plan usage.")
-            }
+            val scope = token.optString("scope").ifBlank { error("OpenAI did not return the granted OAuth scopes.") }
+            val granted = scope.split(' ').filter { it.isNotBlank() }.toSet()
             val accessToken = token.optString("access_token")
             val refreshToken = token.optString("refresh_token")
-            if (accessToken.isBlank() || refreshToken.isBlank()) error("OpenAI returned an incomplete account session.")
-            prefs.edit()
+            val planUsageGranted = granted.contains("resource.invoke") &&
+                granted.contains("chatgpt.tokens.use.direct")
+            if (planUsageGranted && accessToken.isBlank()) {
+                error("OpenAI granted ChatGPT plan usage without returning an access token. Please reconnect.")
+            }
+
+            // Identity sign-in is still useful when the user declines the separate
+            // ChatGPT-plan permission. Keep the verified identity and show plan usage
+            // as disabled; never send inference without both required scopes.
+            val editor = prefs.edit()
                 .putString("client_id", callback.second)
-                .putString("access_token", encrypt(accessToken))
-                .putString("refresh_token", encrypt(refreshToken))
                 .putString("id_token", encrypt(idToken))
                 .putString("scope", scope)
                 .putString("email", identity.optString("email"))
                 .putString("subject", identity.optString("sub"))
-                .putLong("expires_at", System.currentTimeMillis() + token.optLong("expires_in", 3600L) * 1000L)
-                .apply()
+                .putLong(
+                    "expires_at",
+                    if (accessToken.isBlank()) 0L
+                    else System.currentTimeMillis() + token.optLong("expires_in", 3600L) * 1000L
+                )
+            if (accessToken.isNotBlank()) editor.putString("access_token", encrypt(accessToken))
+            else editor.remove("access_token")
+            if (refreshToken.isNotBlank()) editor.putString("refresh_token", encrypt(refreshToken))
+            else editor.remove("refresh_token")
+            editor.apply()
             status()
         }
     }
@@ -254,7 +267,7 @@ class ThorChatGPTAccountManager(private val context: Context) {
                 val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }.getOrNull().orEmpty()
                 if (detail.contains("subscription_sharing_usage_limit_exceeded") ||
                     detail.contains("subscription_sharing_usage_unavailable")) {
-                    error("Your ChatGPT plan's shared-app usage limit is unavailable right now. THOR can use its free Gemini fallback.")
+                    error("ChatGPT plan usage is unavailable or has reached an app limit. Check ChatGPT Settings > Usage, or choose another provider in THOR settings.")
                 }
                 error("ChatGPT request failed (HTTP $statusCode): ${detail.take(180).ifBlank { "please reconnect and retry" }}")
             }
@@ -274,7 +287,7 @@ class ThorChatGPTAccountManager(private val context: Context) {
                             val err = event.optJSONObject("response")?.optJSONObject("error")
                             val code = err?.optString("code").orEmpty()
                             if (code.contains("subscription_sharing_usage")) {
-                                error("Your ChatGPT plan's shared-app usage limit is unavailable. THOR will use its free Gemini fallback.")
+                                error("ChatGPT plan usage is unavailable or has reached an app limit. Check ChatGPT Settings > Usage, or choose another provider in THOR settings.")
                             }
                             error(err?.optString("message")?.take(180).orEmpty().ifBlank { "ChatGPT response failed." })
                         }
@@ -298,18 +311,39 @@ class ThorChatGPTAccountManager(private val context: Context) {
         val clientId = prefs.getString("client_id", null)
             ?: error("Your ChatGPT account registration is missing. Connect it again.")
         val discovery = getJson(discoveryUrl)
-        val token = postForm(discovery.getString("token_endpoint"), linkedMapOf(
-            "grant_type" to "refresh_token",
-            "client_id" to clientId,
-            "refresh_token" to refresh,
-            "resource" to resource
-        ))
+        val token = try {
+            postForm(discovery.getString("token_endpoint"), linkedMapOf(
+                "grant_type" to "refresh_token",
+                "client_id" to clientId,
+                "refresh_token" to refresh,
+                "resource" to resource
+            ))
+        } catch (error: Exception) {
+            val detail = error.message.orEmpty().lowercase()
+            val terminalRefreshError = listOf(
+                "invalid_grant", "invalid_refresh_token", "token_expired",
+                "refresh_token_expired", "refresh_token_invalidated", "refresh_token_reused"
+            ).any { detail.contains(it) }
+            if (terminalRefreshError) {
+                // Keep the issued client ID and verified ID token so the user can
+                // reauthorize the same registration; discard only unusable tokens.
+                prefs.edit()
+                    .remove("access_token")
+                    .remove("refresh_token")
+                    .remove("scope")
+                    .remove("expires_at")
+                    .apply()
+            }
+            throw error
+        }
         val access = token.optString("access_token")
         val rotatedRefresh = token.optString("refresh_token").ifBlank { refresh }
-        if (access.isBlank()) error("ChatGPT session expired. Please reconnect your account.")
+        if (access.isBlank()) error("ChatGPT session refresh returned no access token. Please reconnect.")
+        val refreshedScope = token.optString("scope").ifBlank { prefs.getString("scope", "").orEmpty() }
         prefs.edit()
             .putString("access_token", encrypt(access))
             .putString("refresh_token", encrypt(rotatedRefresh))
+            .putString("scope", refreshedScope)
             .putLong("expires_at", System.currentTimeMillis() + token.optLong("expires_in", 3600L) * 1000L)
             .apply()
         return access
