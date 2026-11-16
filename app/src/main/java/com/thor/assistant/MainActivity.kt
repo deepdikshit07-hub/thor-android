@@ -1734,7 +1734,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             } else if (status.connected) {
                 "ChatGPT identity connected, but plan usage permission is not active."
             } else {
-                "ChatGPT is not connected. THOR will use its no-key Gemini fallback until you connect an eligible account."
+                "ChatGPT is optional and is not connected. Automatic mode will try Firebase Gemini first, then any provider keys you have configured. Register the Firebase App Check debug token for sideloaded debug builds."
             }
         }
         refreshChatGPTStatus()
@@ -1830,7 +1830,15 @@ lower.startsWith("অ্যালার্ম ") -> {
                             }
                         }
                     } catch (error: Exception) {
-                        Toast.makeText(this@MainActivity, "Online test failed: " + (error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
+                        val reason = error.message ?: error.javaClass.simpleName
+                        val appCheckHint = if (reason.contains("app check", true) || reason.contains("attestation", true) || reason.contains("403", true)) {
+                            "\\n\\nFor a sideloaded debug build, register the debug token printed in Logcat at Firebase Console > App Check > your Android app > Manage debug tokens."
+                        } else ""
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("CONNECTION TEST FAILED")
+                            .setMessage(reason + appCheckHint)
+                            .setPositiveButton("OK", null)
+                            .show().also { stylePremiumDialog(it) }
                     } finally { runOnUiThread { isEnabled = true; text = "TEST ONLINE CONNECTION" } }
                 }
             }
