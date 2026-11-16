@@ -199,7 +199,7 @@ test("Gemini Live token route returns a constrained short-lived token", async ()
     assert.equal(options.headers["x-goog-api-key"], "server-only-test-key");
     const requestBody = JSON.parse(options.body);
     assert.equal(requestBody.uses, 1);
-    assert.equal(requestBody.liveConnectConstraints.model, "models/gemini-3.8-live");
+    assert.equal(requestBody.liveConnectConstraints.model, "models/gemini-3.1-flash-live-preview");
     assert.equal(requestBody.liveConnectConstraints.config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Charon");
     return new Response(JSON.stringify({ name: "short-lived-live-token" }), {
       status: 200, headers: { "content-type": "application/json" }
