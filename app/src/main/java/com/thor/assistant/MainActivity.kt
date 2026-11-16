@@ -1648,6 +1648,12 @@ lower.startsWith("অ্যালার্ম ") -> {
             }
         }
         updateModelChoices(current.provider, current.model)
+        panel.addView(TextView(this).apply {
+            text = "Choose a suggested model or enter a provider-supported model ID. ChatGPT account models load from your signed-in account; other lists are suggestions and may vary by account or region."
+            textSize = 11f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 4, 0, 6)
+        }, matchWrap())
         val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions endpoint")
         val keyField = field(
             "API key",
@@ -1691,6 +1697,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     try {
                         val result = chatgpt.signIn(this@MainActivity)
                         refreshChatGPTStatus()
+                        updateModelChoices(ThorAiProviderManager.Provider.CHATGPT_ACCOUNT, modelField.text.toString())
                         Toast.makeText(this@MainActivity, if (result.planUsageEnabled) "ChatGPT account connected." else "ChatGPT connected without plan usage permission.", Toast.LENGTH_LONG).show()
                     } catch (error: Exception) {
                         Toast.makeText(this@MainActivity, "ChatGPT sign-in failed: ${error.message ?: "please retry"}", Toast.LENGTH_LONG).show()
@@ -1713,6 +1720,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 mainScope.launch {
                     val revoked = chatgpt.disconnect()
                     refreshChatGPTStatus()
+                    updateModelChoices(ThorAiProviderManager.Provider.CHATGPT_ACCOUNT, modelField.text.toString())
                     connectChatGPT.text = "CONTINUE WITH CHATGPT"
                     isEnabled = true
                     Toast.makeText(
