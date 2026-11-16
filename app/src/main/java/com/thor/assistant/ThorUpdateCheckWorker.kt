@@ -35,7 +35,11 @@ class ThorUpdateCheckWorker(
             setRequestProperty("User-Agent", "THOR-Android")
         }
         return try {
-            if (connection.responseCode !in 200..299) return Result.retry()
+            val status = connection.responseCode
+            // No published release is a normal pre-release state, not a transient
+            // network failure. Wait for the next scheduled check instead of retrying.
+            if (status == HttpURLConnection.HTTP_NOT_FOUND) return Result.success()
+            if (status !in 200..299) return Result.retry()
             val json = connection.inputStream.bufferedReader(Charsets.UTF_8).use {
                 JSONObject(it.readText())
             }
