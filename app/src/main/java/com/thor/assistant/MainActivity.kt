@@ -211,7 +211,12 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 builder.setCancelable(!update.mandatory).show()
             } catch (error: Exception) {
                 if (!silent) {
-                    addMessage("THOR", "Couldn't check for updates: ${error.message ?: error.javaClass.simpleName}")
+                    val reason = error.message ?: error.javaClass.simpleName
+                    if (reason.contains("No official THOR update has been published yet", ignoreCase = true)) {
+                        addMessage("THOR", "THOR's update feed is ready, but its first signed release has not been published yet. Please check again later.")
+                    } else {
+                        addMessage("THOR", "Couldn't check for updates: $reason")
+                    }
                 }
             }
         }
