@@ -55,8 +55,8 @@ class ThorLiveSession(
     companion object {
         private const val INPUT_RATE = 16_000
         private const val OUTPUT_RATE = 24_000
-        private const val FRAME_BYTES = 640 // 20 ms at 16 kHz, mono PCM16
-        private const val LIVE_MODEL = "models/gemini-3.8-live"
+        private const val FRAME_BYTES = 3_200 // 100 ms at 16 kHz, mono PCM16
+        private const val LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
     }
 
     private val appContext = context.applicationContext
@@ -68,7 +68,7 @@ class ThorLiveSession(
         .build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stopped = AtomicBoolean(false)
-    private val audioQueue = ArrayBlockingQueue<ByteArray>(100)
+    private val audioQueue = ArrayBlockingQueue<ByteArray>(20)
     private var socket: WebSocket? = null
     private var recorder: AudioRecord? = null
     private var track: AudioTrack? = null
@@ -138,7 +138,7 @@ class ThorLiveSession(
                     if (!ready.isCompleted) ready.completeExceptionally(
                         IllegalStateException("Live connection closed before setup completed.")
                     )
-                    if (!stopped.get()) fail("Live connection closed: $reason")
+                    if (!stopped.get()) fail("Live connection closed (code $code): ${reason.ifBlank { "no reason supplied" }}")
                 }
             })
             withTimeout(15_000L) { ready.await() }
