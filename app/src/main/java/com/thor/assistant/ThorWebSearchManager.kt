@@ -26,7 +26,7 @@ object ThorWebSearchManager {
         require(cleanQuery.isNotBlank()) { "Enter a search query." }
 
         val encoded = URLEncoder.encode(cleanQuery, StandardCharsets.UTF_8.name())
-        val connection = (URL("https://html.duckduckgo.com/html/?q=" + encoded)
+        val connection = (URL("https://html.duckduckgo.com/html/?q=" + encoded + "&kp=1)
             .openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 12_000
