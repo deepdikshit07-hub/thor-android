@@ -16,6 +16,7 @@ import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 
 /**
  * Per-installation AI provider settings. API credentials are encrypted with an
@@ -26,10 +27,12 @@ import kotlinx.coroutines.delay
  */
 class ThorAiProviderManager(private val context: Context) {
     enum class Provider(val title: String, val defaultModel: String, val defaultEndpoint: String) {
-        GEMINI("Google Gemini (Firebase)", "gemini-3.8-flash", ""),
-        GEMINI_API("Google Gemini (own API key)", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
+        AUTO("Automatic (recommended)", "", ""),
+        GEMINI("Google Gemini Flash (Firebase)", "gemini-3.8-flash", ""),
+        GEMINI_API("Google Gemini Flash (API key)", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
+        GROQ("Groq", "openai/gpt-oss-20b", "https://api.groq.com/openai/v1/chat/completions"),
+        CLAUDE("Claude (Anthropic API)", "claude-haiku-5-5", "https://api.anthropic.com/v1/messages"),
         OPENAI("OpenAI / ChatGPT API", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions"),
-        GROQ("Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions"),
         OPENROUTER("OpenRouter", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
         CLOUDFLARE("Cloudflare Workers AI", "@cf/meta/llama-3.1-8b-instruct", ""),
         CUSTOM("Custom OpenAI-compatible API", "", ""),
@@ -46,10 +49,28 @@ class ThorAiProviderManager(private val context: Context) {
     private val prefs = context.getSharedPreferences("thor_ai_provider", Context.MODE_PRIVATE)
     private val alias = "thor_ai_provider_aes_key"
 
+    init {
+        // One-time migration: enable the automatic mode requested for this THOR upgrade.
+        // Provider-specific encrypted keys remain untouched.
+        if (!prefs.getBoolean("auto_provider_migration_v1", false)) {
+            prefs.edit()
+                .putString("provider", Provider.AUTO.name)
+                .putBoolean("auto_provider_migration_v1", true)
+                .apply()
+        }
+    }
+
+    fun allowMeteredAutoProviders(): Boolean =
+        prefs.getBoolean("allow_metered_auto_providers", false)
+
+    fun setAllowMeteredAutoProviders(enabled: Boolean) {
+        prefs.edit().putBoolean("allow_metered_auto_providers", enabled).apply()
+    }
+
     fun settings(forProvider: Provider? = null): Settings {
         val provider = forProvider ?: runCatching {
-            Provider.valueOf(prefs.getString("provider", Provider.GEMINI.name) ?: Provider.GEMINI.name)
-        }.getOrDefault(Provider.GEMINI)
+            Provider.valueOf(prefs.getString("provider", Provider.AUTO.name) ?: Provider.AUTO.name)
+        }.getOrDefault(Provider.AUTO)
         val suffix = provider.name
         val savedModel = prefs.getString("model_$suffix", null)
         // Gemini now limits 2.5 model access for newly created projects.
@@ -89,19 +110,159 @@ class ThorAiProviderManager(private val context: Context) {
         prefs.edit().remove("api_key_${provider.name}").apply()
     }
 
-    suspend fun ask(prompt: String, maxTokens: Int = 192): String = withContext(Dispatchers.IO) {
-        val config = settings()
+    data class AutomaticAnswer(val provider: Provider, val text: String)
+
+    /**
+     * Tries eligible no-cost-tier routes first. Metered Claude/OpenAI calls are
+     * excluded unless the user explicitly enables them in THOR settings.
+     */
+    suspend fun askAutomatically(
+        prompt: String,
+        geminiFirebase: suspend () -> String
+    ): AutomaticAnswer {
+        val candidates = buildList {
+            add(Provider.GEMINI)
+            add(Provider.GROQ)
+            add(Provider.GEMINI_API)
+            if (allowMeteredAutoProviders()) {
+                add(Provider.CLAUDE)
+                add(Provider.OPENAI)
+            }
+        }
+        val failures = mutableListOf<String>()
+        for (provider in candidates) {
+            if (provider != Provider.GEMINI) {
+                val config = settings(provider)
+                if (config.apiKey.isBlank()) continue
+            }
+            try {
+                val answer = if (provider == Provider.GEMINI) {
+                    geminiFirebase()
+                } else {
+                    ask(provider, prompt)
+                }
+                if (answer.isNotBlank()) return AutomaticAnswer(provider, answer)
+                failures += "${provider.title}: empty response"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w("THOR_AI_PROVIDER", "Automatic route ${provider.name} failed", error)
+                failures += "${provider.title}: ${error.message ?: error.javaClass.simpleName}"
+            }
+        }
+        val detail = failures.takeLast(3).joinToString("; ")
+        throw IllegalStateException(
+            if (detail.isBlank()) {
+                "No online provider is configured. Add a Groq or Gemini API key, or check the Firebase Gemini connection."
+            } else {
+                "All eligible online providers are unavailable. $detail"
+            }
+        )
+    }
+
+    suspend fun stream(provider: Provider, prompt: String, onChunk: (String) -> Unit, maxTokens: Int = 512): String = withContext(Dispatchers.IO) {
+        val config = settings(provider)
+        require(provider !in listOf(Provider.AUTO, Provider.LOCAL, Provider.GEMINI)) { "This provider uses a different streaming transport." }
+        require(config.apiKey.isNotBlank()) { "Add an API key for " + provider.title + " in AI Provider settings." }
+        val endpoint = config.endpoint.trim().ifBlank { provider.defaultEndpoint }
+        require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
+        val body = if (provider == Provider.CLAUDE) {
+            JSONObject().put("model", config.model).put("max_tokens", maxTokens.coerceIn(64, 1024)).put("stream", true)
+                .put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt.take(12000))))
+        } else {
+            JSONObject().put("model", config.model).put("stream", true).put("max_tokens", maxTokens.coerceIn(64, 1024))
+                .put("temperature", 0.7).put("messages", JSONArray().put(JSONObject().put("role", "user").put("content", prompt.take(12000))))
+        }
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; connectTimeout = 10000; readTimeout = 18000; doOutput = true
+            setRequestProperty("Content-Type", "application/json"); setRequestProperty("Accept", "text/event-stream")
+            if (provider == Provider.CLAUDE) { setRequestProperty("x-api-key", config.apiKey); setRequestProperty("anthropic-version", "2023-06-01") }
+            else setRequestProperty("Authorization", "Bearer " + config.apiKey)
+            if (provider == Provider.OPENROUTER) { setRequestProperty("HTTP-Referer", "https://github.com/deepdikshit07-hub/thor-android"); setRequestProperty("X-Title", "THOR Android Assistant") }
+        }
+        val full = StringBuilder()
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                val raw = connection.errorStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") ?: JSONObject(raw).optString("message") }.getOrNull().orEmpty().take(220).ifBlank { "HTTP " + status }
+                if (status == 429) prefs.edit().putLong("cooldown_until_" + provider.name, System.currentTimeMillis() + 3600000L).apply()
+                throw IllegalStateException(provider.title + " returned HTTP " + status + ": " + detail)
+            }
+            connection.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                lines.forEach { line ->
+                    if (!line.startsWith("data:")) return@forEach
+                    val data = line.removePrefix("data:").trim()
+                    if (data.isBlank() || data == "[DONE]") return@forEach
+                    val json = runCatching { JSONObject(data) }.getOrNull() ?: return@forEach
+                    val piece = if (provider == Provider.CLAUDE) {
+                        if (json.optString("type") == "content_block_delta") json.optJSONObject("delta")?.optString("text").orEmpty() else ""
+                    } else json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty()
+                    if (piece.isNotEmpty()) { full.append(piece); onChunk(piece) }
+                    if (json.optString("type") == "error") throw IllegalStateException("Provider streaming error.")
+                }
+            }
+            full.toString().takeIf { it.isNotBlank() } ?: error(provider.title + " returned no streamed text.")
+        } finally { connection.disconnect() }
+    }
+
+    data class StreamAnswer(val provider: Provider, val text: String)
+
+    suspend fun streamAutomatically(prompt: String, geminiFirebase: suspend ((String) -> Unit) -> String, onChunk: (String) -> Unit): StreamAnswer {
+        val candidates = buildList {
+            add(Provider.GEMINI)
+            add(Provider.GROQ)
+            add(Provider.GEMINI_API)
+            if (allowMeteredAutoProviders()) {
+                add(Provider.CLAUDE)
+                add(Provider.OPENAI)
+            }
+        }
+        val failures = mutableListOf<String>()
+        for (provider in candidates) {
+            if (provider != Provider.GEMINI && settings(provider).apiKey.isBlank()) continue
+            val received = StringBuilder()
+            try {
+                val answer = when (provider) {
+                    Provider.GEMINI -> geminiFirebase { part -> received.append(part); onChunk(part) }
+                    Provider.GEMINI_API -> ask(provider, prompt).also { received.append(it); onChunk(it) }
+                    else -> stream(provider, prompt, { part -> received.append(part); onChunk(part) })
+                }
+                if (answer.isNotBlank()) return StreamAnswer(provider, answer)
+                failures += provider.title + ": empty response"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                Log.w("THOR_AI_PROVIDER", "Streaming route failed: " + provider.name, error)
+                if (received.isNotEmpty()) throw IllegalStateException(provider.title + " stopped after a partial response. Retry the question.", error)
+                failures += provider.title + ": " + (error.message ?: error.javaClass.simpleName)
+            }
+        }
+        throw IllegalStateException(if (failures.isEmpty()) "No online AI provider is configured. Add a Gemini or Groq API key." else "All configured online providers failed. " + failures.takeLast(4).joinToString("; "))
+    }
+
+    suspend fun ask(prompt: String, maxTokens: Int = 192): String =
+        ask(settings(), prompt, maxTokens)
+
+    suspend fun ask(provider: Provider, prompt: String, maxTokens: Int = 192): String =
+        ask(settings(provider), prompt, maxTokens)
+
+    private suspend fun ask(config: Settings, prompt: String, maxTokens: Int): String = withContext(Dispatchers.IO) {
         val blockedUntil = prefs.getLong("cooldown_until_${config.provider.name}", 0L)
         if (System.currentTimeMillis() < blockedUntil) {
             val minutes = ((blockedUntil - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
             error("${config.provider.title} quota cooldown is active for about $minutes more minutes.")
         }
+        require(config.provider != Provider.AUTO) { "Automatic mode must use askAutomatically()." }
         require(config.provider != Provider.LOCAL) { "Local AI is selected." }
         require(config.provider != Provider.GEMINI) { "Gemini requests must use Firebase AI Logic." }
         require(config.apiKey.isNotBlank()) { "Add an API key for ${config.provider.title} in AI Provider settings." }
         require(config.model.isNotBlank()) { "Enter a model name." }
         if (config.provider == Provider.GEMINI_API) {
             return@withContext askGeminiApi(config, prompt, maxTokens)
+        }
+        if (config.provider == Provider.CLAUDE) {
+            return@withContext askClaude(config, prompt, maxTokens)
         }
         val endpoint = config.endpoint.trim()
         require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
@@ -163,6 +324,64 @@ class ThorAiProviderManager(private val context: Context) {
         }
     }
 
+
+    private fun askClaude(config: Settings, prompt: String, maxTokens: Int): String {
+        val endpoint = config.endpoint.trim().ifBlank { Provider.CLAUDE.defaultEndpoint }
+        require(endpoint.startsWith("https://", ignoreCase = true)) { "Anthropic endpoint must use HTTPS." }
+        val body = JSONObject()
+            .put("model", config.model)
+            .put("max_tokens", maxTokens.coerceIn(64, 512))
+            .put("messages", JSONArray().put(JSONObject()
+                .put("role", "user")
+                .put("content", prompt.take(4000))))
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("x-api-key", config.apiKey)
+            setRequestProperty("anthropic-version", "2023-06-01")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Accept", "application/json")
+        }
+        try {
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) {
+                val detail = runCatching {
+                    JSONObject(raw).optJSONObject("error")?.optString("message")
+                }.getOrNull().orEmpty().take(220).ifBlank { "HTTP $status" }
+                if (status == 429) {
+                    prefs.edit()
+                        .putLong("cooldown_until_${config.provider.name}", System.currentTimeMillis() + 60L * 60L * 1000L)
+                        .apply()
+                }
+                throw IllegalStateException(when (status) {
+                    401, 403 -> "Anthropic rejected the API key or permissions ($detail)."
+                    429 -> "Anthropic rate limit or credit limit reached. ($detail)"
+                    else -> "Anthropic request failed: $detail"
+                })
+            }
+            val blocks = JSONObject(raw).optJSONArray("content")
+            val answer = buildString {
+                if (blocks != null) for (i in 0 until blocks.length()) {
+                    val block = blocks.optJSONObject(i)
+                    if (block?.optString("type") == "text") {
+                        val value = block.optString("text").trim()
+                        if (value.isNotBlank()) {
+                            if (isNotEmpty()) append('\n')
+                            append(value)
+                        }
+                    }
+                }
+            }
+            return answer.takeIf { it.isNotBlank() } ?: error("Claude returned no text.")
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     /**
      * Gemini 3.8 Flash can occasionally be overloaded on the public API.

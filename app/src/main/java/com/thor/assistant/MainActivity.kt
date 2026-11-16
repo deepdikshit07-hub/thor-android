@@ -76,6 +76,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
+    private val aiConversation = mutableListOf<Pair<String, String>>()
+    private var activeAiReply = false
     private var wakeRecognizer: SpeechRecognizer? = null
     private var tapRecognizer: SpeechRecognizer? = null
     private val wakeHandler = Handler(Looper.getMainLooper())
@@ -1564,17 +1566,51 @@ lower.startsWith("অ্যালার্ম ") -> {
             true
         )
         panel.addView(TextView(this).apply {
-            text = "Choose a provider and model. API keys are encrypted with Android Keystore. Provider API billing is separate from ChatGPT subscriptions. Firebase Gemini uses THOR's managed Firebase connection; other providers use your own API key."
+            text = "Automatic mode tries Gemini and configured free-tier providers first, then uses THOR Offline AI. Claude and OpenAI API calls can incur charges and are excluded from automatic mode unless you explicitly allow them. API keys are encrypted with Android Keystore."
             textSize = 12f
             setTextColor(Color.LTGRAY)
             setPadding(0, 12, 0, 4)
         }, matchWrap())
+        val allowMetered = android.widget.CheckBox(this).apply {
+            text = "Allow Claude/OpenAI in automatic mode (may incur API charges)"
+            isChecked = manager.allowMeteredAutoProviders()
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+        }
+        panel.addView(allowMetered, matchWrap())
+        val testConnection = Button(this).apply {
+            text = "TEST ONLINE CONNECTION"
+            setOnClickListener {
+                isEnabled = false
+                text = "TESTING..."
+                mainScope.launch {
+                    try {
+                        val result = manager.streamAutomatically("Reply with only the word OK.",
+                            geminiFirebase = { emit ->
+                                if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
+                                GeminiAssistant.stream("Reply with only the word OK.", manager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
+                            },
+                            onChunk = {})
+                        Toast.makeText(this@MainActivity, "Online AI verified: " + result.provider.title, Toast.LENGTH_LONG).show()
+                    } catch (error: Exception) {
+                        Toast.makeText(this@MainActivity, "Online test failed: " + (error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
+                    } finally { runOnUiThread { isEnabled = true; text = "TEST ONLINE CONNECTION" } }
+                }
+            }
+        }
+        panel.addView(testConnection, matchWrap())
 
         var previousProvider = current.provider
         fun applyProviderState(provider: ThorAiProviderManager.Provider) {
-            val needsEndpointAndKey = provider != ThorAiProviderManager.Provider.GEMINI &&
-                provider != ThorAiProviderManager.Provider.LOCAL
-            modelField.isEnabled = provider != ThorAiProviderManager.Provider.LOCAL
+            val needsEndpointAndKey = provider !in listOf(
+                ThorAiProviderManager.Provider.GEMINI,
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
+            modelField.isEnabled = provider !in listOf(
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
             endpointField.isEnabled = needsEndpointAndKey
             keyField.isEnabled = needsEndpointAndKey
         }
@@ -1617,6 +1653,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                         endpointField.text.toString(),
                         keyField.text.toString()
                     )
+                    manager.setAllowMeteredAutoProviders(allowMetered.isChecked)
                     Toast.makeText(this, "AI provider and model saved.", Toast.LENGTH_LONG).show()
                 } catch (error: Exception) {
                     Toast.makeText(this, "Could not save provider settings: ${error.message}", Toast.LENGTH_LONG).show()
@@ -1632,58 +1669,73 @@ lower.startsWith("অ্যালার্ম ") -> {
     }
 
     private fun askGemini(prompt: String) {
+        if (activeAiReply) { addMessage("THOR", "One moment — I'm still finishing the previous answer."); return }
         val providerManager = ThorAiProviderManager(this)
         val selectedSettings = providerManager.settings()
         val selectedProvider = selectedSettings.provider
-        if (selectedProvider == ThorAiProviderManager.Provider.LOCAL) {
-            addMessage("THOR", "On-device AI is selected. No online request will be made.")
-            askLocalOrFallback(prompt)
-            return
+        if (selectedProvider == ThorAiProviderManager.Provider.LOCAL) { askLocalOrFallback(prompt); return }
+        val languageInstruction = when (language.selectedItemPosition) { 1 -> "Reply in natural Hindi."; 2 -> "Reply in natural Bengali."; else -> "Reply in clear English." }
+        val recentContext = aiConversation.takeLast(12).joinToString("\n") { item -> item.first + ": " + item.second.take(1800) }
+        val styleInstruction = buildString {
+            append("You are THOR, a concise and helpful Android assistant. Answer directly, accurately, and naturally.\n")
+            append(languageInstruction).append("\n").append(learningMemory.systemContext())
+            if (recentContext.isNotBlank()) append("\nRecent conversation:\n").append(recentContext)
+            append("\nUser: ").append(prompt)
         }
-
-        val languageInstruction = when (language.selectedItemPosition) {
-            1 -> "Reply in natural Hindi."
-            2 -> "Reply in natural Bengali."
-            else -> "Reply in clear English."
-        }
-        val styleInstruction = "You are THOR, a concise and helpful Android assistant. Answer the user's question directly, match their language and tone, and be accurate.\n$languageInstruction\n${learningMemory.systemContext()}\nUser: $prompt"
-
-        if (selectedProvider != ThorAiProviderManager.Provider.GEMINI) {
-            addMessage("THOR", "Connecting to ${selectedProvider.title}...")
-            mainScope.launch {
-                try {
-                    val answer = providerManager.ask(styleInstruction)
-                    addMessage("THOR", answer)
-                    speak(answer)
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Exception) {
-                    android.util.Log.e("THOR_AI_PROVIDER", "Selected provider failed", error)
-                    addMessage("THOR", "${selectedProvider.title} request failed: ${error.message ?: error.javaClass.simpleName}. Switching to on-device AI.")
-                    askLocalOrFallback(prompt)
-                }
-            }
-            return
-        }
-
-        if (!firebaseReady) {
-            addMessage("THOR", "Firebase Gemini is not ready. Check Firebase setup and App Check. Switching to on-device AI.")
-            askLocalOrFallback(prompt)
-            return
-        }
-        addMessage("THOR", "Thinking with ${selectedSettings.model}...")
+        activeAiReply = true
+        addMessage("THOR", "")
+        val streamed = StringBuilder()
         mainScope.launch {
             try {
-                val answer = GeminiAssistant.ask(styleInstruction, selectedSettings.model)
-                addMessage("THOR", answer)
-                speak(answer)
+                val onToken: (String) -> Unit = { token ->
+                    streamed.append(token)
+                    runOnUiThread { if (!isFinishing && !isDestroyed) chat.append(token) }
+                }
+                val providerTitle: String
+                when (selectedProvider) {
+                    ThorAiProviderManager.Provider.AUTO -> {
+                        val result = providerManager.streamAutomatically(styleInstruction,
+                            geminiFirebase = { emit ->
+                                if (!firebaseReady) error("Firebase initialization failed. The first real Gemini request will verify the live service and App Check.")
+                                GeminiAssistant.stream(styleInstruction, providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
+                            },
+                            onChunk = onToken)
+                        providerTitle = result.provider.title
+                    }
+                    ThorAiProviderManager.Provider.GEMINI -> {
+                        if (!firebaseReady) error("Firebase initialization failed. Check Firebase configuration and App Check.")
+                        GeminiAssistant.stream(styleInstruction, selectedSettings.model, onToken)
+                        providerTitle = selectedSettings.model
+                    }
+                    else -> {
+                        providerManager.stream(selectedProvider, styleInstruction, onToken)
+                        providerTitle = selectedProvider.title
+                    }
+                }
+                val finalText = streamed.toString().trim()
+                if (finalText.isNotBlank()) {
+                    aiConversation.add("User" to prompt)
+                    aiConversation.add("THOR" to finalText)
+                    while (aiConversation.size > 20) aiConversation.removeAt(0)
+                    runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("\n\n— " + providerTitle + "\n\n") }
+                    speak(finalText)
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
-                addMessage("THOR", "Gemini unavailable: ${error.message ?: error.javaClass.simpleName}. Switching to on-device AI.")
-                askLocalOrFallback(prompt)
-            }
+                android.util.Log.e("THOR_AI_PROVIDER", "Live response failed", error)
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        if (streamed.isEmpty()) {
+                            chat.append("Online AI unavailable: " + (error.message ?: error.javaClass.simpleName) + ". Switching to on-device AI.\n\n")
+                            activeAiReply = false
+                            askLocalOrFallback(prompt)
+                        } else {
+                            chat.append("\n\n[Response interrupted: " + (error.message ?: "connection lost") + "]\n\n")
+                        }
+                    }
+                }
+            } finally { activeAiReply = false }
         }
     }
 
