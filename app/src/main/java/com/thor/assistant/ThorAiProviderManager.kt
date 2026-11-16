@@ -132,22 +132,50 @@ class ThorAiProviderManager(private val context: Context) {
     data class AutomaticAnswer(val provider: Provider, val text: String)
 
     /**
-     * Tries eligible no-cost-tier routes first. Metered Claude/OpenAI calls are
-     * excluded unless the user explicitly enables them in THOR settings.
+     * Use every provider the user has actually configured, while keeping
+     * potentially metered providers out until the user explicitly opts in.
+     * OpenRouter's explicitly free model IDs are safe to try without that opt-in.
+     */
+    private fun automaticCandidates(): List<Provider> {
+        val candidates = mutableListOf(Provider.GEMINI)
+        fun addConfigured(provider: Provider) {
+            if (settings(provider).apiKey.isNotBlank() && provider !in candidates) {
+                candidates += provider
+            }
+        }
+
+        addConfigured(Provider.GROQ)
+        addConfigured(Provider.GEMINI_API)
+
+        val openRouter = settings(Provider.OPENROUTER)
+        if (openRouter.apiKey.isNotBlank() &&
+            (allowMeteredAutoProviders() || openRouter.model.endsWith(":free", ignoreCase = true))
+        ) {
+            candidates += Provider.OPENROUTER
+        }
+
+        if (allowMeteredAutoProviders()) {
+            listOf(
+                Provider.CLAUDE,
+                Provider.OPENAI,
+                Provider.DEEPSEEK,
+                Provider.MISTRAL,
+                Provider.CLOUDFLARE,
+                Provider.CUSTOM
+            ).forEach(::addConfigured)
+        }
+        return candidates
+    }
+
+    /**
+     * Tries Firebase Gemini and configured free-tier providers first. Any
+     * additional providers that may incur API charges require explicit opt-in.
      */
     suspend fun askAutomatically(
         prompt: String,
         geminiFirebase: suspend () -> String
     ): AutomaticAnswer {
-        val candidates = buildList {
-            add(Provider.GEMINI)
-            add(Provider.GROQ)
-            add(Provider.GEMINI_API)
-            if (allowMeteredAutoProviders()) {
-                add(Provider.CLAUDE)
-                add(Provider.OPENAI)
-            }
-        }
+        val candidates = automaticCandidates()
         val failures = mutableListOf<String>()
         for (provider in candidates) {
             if (provider != Provider.GEMINI) {
@@ -229,15 +257,7 @@ class ThorAiProviderManager(private val context: Context) {
     data class StreamAnswer(val provider: Provider, val text: String)
 
     suspend fun streamAutomatically(prompt: String, geminiFirebase: suspend ((String) -> Unit) -> String, onChunk: (String) -> Unit): StreamAnswer {
-        val candidates = buildList {
-            add(Provider.GEMINI)
-            add(Provider.GROQ)
-            add(Provider.GEMINI_API)
-            if (allowMeteredAutoProviders()) {
-                add(Provider.CLAUDE)
-                add(Provider.OPENAI)
-            }
-        }
+        val candidates = automaticCandidates()
         val failures = mutableListOf<String>()
         for (provider in candidates) {
             if (provider != Provider.GEMINI && settings(provider).apiKey.isBlank()) continue
