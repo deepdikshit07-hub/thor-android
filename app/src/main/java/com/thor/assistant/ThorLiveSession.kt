@@ -55,8 +55,8 @@ class ThorLiveSession(
     companion object {
         private const val INPUT_RATE = 16_000
         private const val OUTPUT_RATE = 24_000
-        private const val FRAME_BYTES = 640 // 20 ms at 16 kHz, mono PCM16
-        private const val LIVE_MODEL = "models/gemini-3.8-live"
+        private const val FRAME_BYTES = 3_200 // 100 ms at 16 kHz, mono PCM16
+        private const val LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
     }
 
     private val appContext = context.applicationContext
@@ -68,7 +68,7 @@ class ThorLiveSession(
         .build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val stopped = AtomicBoolean(false)
-    private val audioQueue = ArrayBlockingQueue<ByteArray>(100)
+    private val audioQueue = ArrayBlockingQueue<ByteArray>(20)
     private var socket: WebSocket? = null
     private var recorder: AudioRecord? = null
     private var track: AudioTrack? = null
@@ -76,8 +76,8 @@ class ThorLiveSession(
     private var playbackJob: Job? = null
     private var previousAudioMode: Int? = null
 
-    suspend fun start(apiKey: String, voiceName: String, languageName: String) {
-        require(apiKey.isNotBlank()) { "Add your Gemini API key in THOR Settings → AI Provider before starting Live Mode." }
+    suspend fun start(ephemeralToken: String, voiceName: String, languageName: String) {
+        require(ephemeralToken.startsWith("authTokens/") || ephemeralToken.startsWith("auth_tokens/")) { "The secure Live token service returned an invalid token." }
         check(socket == null) { "Live session is already started." }
         stopped.set(false)
         notifyState(State.CONNECTING, "SECURING LIVE CONNECTION")
@@ -87,7 +87,7 @@ class ThorLiveSession(
             if (stopped.get()) return
             val ready = CompletableDeferred<Unit>()
             val request = Request.Builder()
-                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + java.net.URLEncoder.encode(apiKey, "UTF-8"))
+                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=" + java.net.URLEncoder.encode(ephemeralToken, "UTF-8"))
                 .build()
             socket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -138,7 +138,7 @@ class ThorLiveSession(
                     if (!ready.isCompleted) ready.completeExceptionally(
                         IllegalStateException("Live connection closed before setup completed.")
                     )
-                    if (!stopped.get()) fail("Live connection closed: $reason")
+                    if (!stopped.get()) fail("Live connection closed (code $code): ${reason.ifBlank { "no reason supplied" }}")
                 }
             })
             withTimeout(15_000L) { ready.await() }
