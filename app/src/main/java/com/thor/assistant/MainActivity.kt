@@ -1997,7 +1997,20 @@ lower.startsWith("অ্যালার্ম ") -> {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         if (streamed.isEmpty()) {
-                            chat.append("Online AI unavailable: " + (error.message ?: error.javaClass.simpleName) + ". Switching to on-device AI.\n\n")
+                            val reason = error.message ?: error.javaClass.simpleName
+                            val offlineReady = offlineAi.isModelInstalled() || offlineAi.hasBundledModel()
+                            val needsAppCheckSetup = reason.contains("app check", ignoreCase = true) ||
+                                reason.contains("attestation", ignoreCase = true) ||
+                                reason.contains("403", ignoreCase = true)
+                            val appCheckHint = if (needsAppCheckSetup) {
+                                " For a sideloaded debug build, register its App Check debug token in Firebase Console > App Check > your Android app > Manage debug tokens."
+                            } else ""
+                            val fallbackStatus = if (offlineReady) {
+                                " Switching to on-device AI."
+                            } else {
+                                " The offline model is not installed, so only THOR's limited built-in fallback is available."
+                            }
+                            chat.append("Online AI unavailable: " + reason + "." + appCheckHint + fallbackStatus + "\\n\\n")
                             activeAiReply = false
                             askLocalOrFallback(prompt)
                         } else {
