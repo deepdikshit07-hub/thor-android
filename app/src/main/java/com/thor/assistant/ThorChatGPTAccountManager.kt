@@ -62,12 +62,28 @@ class ThorChatGPTAccountManager(private val context: Context) {
         )
     }
 
-    fun disconnect() {
+    suspend fun disconnect(): Boolean = withContext(Dispatchers.IO) {
+        val refresh = decrypt(prefs.getString("refresh_token", null))
+        val clientId = prefs.getString("client_id", null)
+        var revoked = false
+        if (!refresh.isNullOrBlank() && !clientId.isNullOrBlank()) {
+            revoked = runCatching {
+                val discovery = getJson(discoveryUrl)
+                val endpoint = discovery.optString("revocation_endpoint")
+                endpoint.isNotBlank() && postFormStatus(endpoint, linkedMapOf(
+                    "token" to refresh,
+                    "token_type_hint" to "refresh_token",
+                    "client_id" to clientId
+                )) == 200
+            }.getOrDefault(false)
+        }
+        // Keep the issued client ID and validated account label so the next
+        // sign-in reuses the existing registration instead of creating another.
         prefs.edit()
-            .remove("client_id").remove("access_token").remove("refresh_token")
+            .remove("access_token").remove("refresh_token")
             .remove("id_token").remove("expires_at").remove("scope")
-            .remove("email").remove("subject")
             .apply()
+        revoked
     }
 
     suspend fun signIn(activity: Activity): AccountStatus = withContext(Dispatchers.IO) {
@@ -345,6 +361,23 @@ class ThorChatGPTAccountManager(private val context: Context) {
             if (code !in 200..299) error("OpenAI sign-in service returned HTTP $code.")
             return JSONObject(raw)
         } finally { connection.disconnect() }
+    }
+
+    private fun postFormStatus(endpoint: String, fields: Map<String, String>): Int {
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 12_000
+            readTimeout = 20_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+        }
+        return try {
+            val body = fields.entries.joinToString("&") { enc(it.key) + "=" + enc(it.value) }
+            connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+            connection.responseCode
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun postForm(endpoint: String, fields: Map<String, String>): JSONObject {
