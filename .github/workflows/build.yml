@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# PR and push events for the same branch share one build slot. This avoids
+# duplicate Gradle downloads and reduces transient Maven Central rate limits.
+concurrency:
+  group: thor-android-build-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

@@ -31,8 +31,10 @@ jobs:
         with:
           node-version: '22'
       - name: Check Worker JavaScript syntax
+        if: ${{ hashFiles('cloudflare/master-mode/package.json') != '' }}
         working-directory: cloudflare/master-mode
         run: node --check src/index.js
       - name: Run Worker route tests
+        if: ${{ hashFiles('cloudflare/master-mode/package.json') != '' }}
         working-directory: cloudflare/master-mode
         run: npm test

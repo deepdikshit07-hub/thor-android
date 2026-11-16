@@ -49,7 +49,14 @@ class ThorUpdateManager(private val activity: Activity) {
         }
         try {
             val status = connection.responseCode
-            if (status !in 200..299) error("Update server returned HTTP $status.")
+            if (status == HttpURLConnection.HTTP_NOT_FOUND) {
+                error(
+                    "No official THOR update has been published yet. The update service will become available after the first signed release is published."
+                )
+            }
+            if (status !in 200..299) {
+                error("THOR update service returned HTTP $status. Please try again later.")
+            }
             val manifest = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
             val json = JSONObject(manifest)
             val versionCode = json.getInt("versionCode")
