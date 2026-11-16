@@ -1782,8 +1782,12 @@ lower.startsWith("অ্যালার্ম ") -> {
                         } catch (accountError: Exception) {
                             if (accountError is CancellationException) throw accountError
                             if (streamed.isNotEmpty()) throw accountError
+                            // Gemini is a setup fallback only. Once the user has
+                            // authorized ChatGPT plan usage, never silently switch
+                            // billing paths on quota, eligibility, region, or service errors.
+                            if (chatgpt.status().planUsageEnabled) throw accountError
                             if (!firebaseReady) throw accountError
-                            runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("ChatGPT account unavailable — using THOR's no-key Gemini fallback.\n") }
+                            runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("ChatGPT plan usage is not connected — using THOR's configured Gemini fallback.\n") }
                             GeminiAssistant.stream(styleInstruction, providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model, onToken)
                             providerTitle = "Gemini (no-key fallback)"
                         }
