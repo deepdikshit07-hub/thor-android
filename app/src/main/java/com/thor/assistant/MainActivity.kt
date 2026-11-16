@@ -1832,7 +1832,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     } catch (error: Exception) {
                         val reason = error.message ?: error.javaClass.simpleName
                         val appCheckHint = if (reason.contains("app check", true) || reason.contains("attestation", true) || reason.contains("403", true)) {
-                            "\\n\\nFor a sideloaded debug build, register the debug token printed in Logcat at Firebase Console > App Check > your Android app > Manage debug tokens."
+                            "\n\nFor a sideloaded debug build, register the debug token printed in Logcat at Firebase Console > App Check > your Android app > Manage debug tokens."
                         } else ""
                         AlertDialog.Builder(this@MainActivity)
                             .setTitle("CONNECTION TEST FAILED")
