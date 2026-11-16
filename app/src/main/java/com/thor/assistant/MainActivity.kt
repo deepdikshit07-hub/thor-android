@@ -531,7 +531,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         settings.textSize = 20f
         settings.background = glassRipple(0x332F3034, 0x55D7B879, 24f)
         header.addView(settings, LinearLayout.LayoutParams(dp(46), dp(46)))
-        settings.setOnClickListener { showLanguageVoiceInfo() }
+        settings.setOnClickListener { showSettingsDialog() }
         root.addView(header, matchWrap())
 
         val welcome = TextView(this).apply {
@@ -680,6 +680,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         tileRow(Triple("◉", "Chat", { showChatDialog() }), Triple("⌁", "Voice", { startVoiceInput() }))
         tileRow(Triple("✧", "Offline AI", { installOfflineAi() }), Triple("▦", "Tools & features", { showFeaturesDialog() }))
         tileRow(Triple("↻", "App updates", { checkForUpdates(silent = false) }), Triple("文", "Language & voice", { showLanguageVoiceInfo() }))
+        tileRow(Triple("⌕", "Web search", { showSearchDialog() }), Triple("◈", "AI models", { showAiProviderSettings() }))
         column.addView(tileRows, matchWrap())
 
         val footer = TextView(this).apply {
@@ -728,7 +729,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         navItem("Home", "⌂") { }
         navItem("Chat", "◉") { showChatDialog() }
         navItem("Tools", "▦") { showFeaturesDialog() }
-        navItem("Settings", "⚙") { showLanguageVoiceInfo() }
+        navItem("Settings", "⚙") { showSettingsDialog() }
         root.addView(nav, matchWrap())
 
         // Keep a lightweight backing transcript view so THOR can append messages before Chat is opened.
@@ -781,6 +782,59 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setPadding(0, dp(5), 0, 0)
         }, matchWrap())
         return tile
+    }
+
+    private fun showSearchDialog() {
+        val queryField = EditText(this).apply {
+            hint = "Search the web..."
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("THOR WEB SEARCH")
+            .setMessage("Search public web results without leaving THOR.")
+            .setView(queryField)
+            .setPositiveButton("SEARCH") { _, _ -> searchWeb(queryField.text.toString().trim()) }
+            .setNegativeButton("CANCEL", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
+    private fun searchWeb(query: String) {
+        if (query.isBlank()) {
+            addMessage("THOR", "Enter something to search for.")
+            return
+        }
+        addMessage("YOU", "Search: " + query)
+        addMessage("THOR", "Searching the web for \"" + query + "\"…")
+        mainScope.launch {
+            try {
+                val results = ThorWebSearchManager.search(query)
+                if (results.isEmpty()) {
+                    addMessage("THOR", "The search provider returned no readable results. Opening the search in your browser instead.")
+                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query))), "Opening web search.")
+                    return@launch
+                }
+                val labels = results.mapIndexed { index, result ->
+                    (index + 1).toString() + ". " + result.title + "\n" + result.snippet.take(180)
+                }.toTypedArray()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("SEARCH RESULTS")
+                    .setItems(labels) { _, which ->
+                        results.getOrNull(which)?.let { result ->
+                            launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse(result.url)), "Opening " + result.title + ".")
+                        }
+                    }
+                    .setNegativeButton("CLOSE", null)
+                    .show().also { stylePremiumDialog(it) }
+                addMessage("THOR", "Found " + results.size + " web results for \"" + query + "\". Tap a result to open it.")
+            } catch (error: Exception) {
+                android.util.Log.e("THOR_WEB_SEARCH", "Web search failed", error)
+                addMessage("THOR", "Web search failed: " + (error.message ?: error.javaClass.simpleName) + ". Opening the search in your browser.")
+                launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query))), "Opening web search.")
+            }
+        }
     }
 
     private fun showChatDialog() {
@@ -1343,13 +1397,12 @@ lower.startsWith("অ্যালার্ম ") -> {
 }
 
 
+            lower == "search" || lower == "google" || lower == "সার্চ" || lower == "खोज" -> showSearchDialog()
+
             lower.startsWith("search ") || lower.startsWith("google ") ||
                 lower.startsWith("खोज ") || lower.startsWith("সার্চ ") -> {
                 val query = command.substringAfter(' ').trim()
-                if (query.isNotEmpty()) {
-                    val url = "https://www.google.com/search?q=${Uri.encode(query)}"
-                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse(url)), "Opening web search.")
-                }
+                if (query.isNotEmpty()) searchWeb(query) else showSearchDialog()
             }
 
             lower.startsWith("open ") || lower.startsWith("launch ") ||
