@@ -1,19 +1,28 @@
 package com.thor.assistant
 
-import android.app.Activity
+import androidx.fragment.app.FragmentActivity
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.NoCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.auth.GoogleAuthProvider
 import android.app.AlertDialog
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.MediaRecorder
-import android.view.KeyEvent
 import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.os.Handler
-import android.os.Looper
+import android.view.KeyEvent
+import android.view.View
 import android.content.pm.ApplicationInfo
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.appcheck.appCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
@@ -22,11 +31,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -34,11 +42,14 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.Settings
-import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.ViewGroup
@@ -50,171 +61,107 @@ import android.widget.Spinner
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Switch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Calendar
 import java.util.Locale
 
-class MainActivity : Activity(), TextToSpeech.OnInitListener {
+class MainActivity : FragmentActivity(), TextToSpeech.OnInitListener {
     private lateinit var chat: TextView
     private lateinit var input: EditText
     private lateinit var language: Spinner
     private lateinit var voiceStyle: Spinner
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var liveSession: ThorLiveSession? = null
+    private var liveOrb: ThorLiveOrbView? = null
+    private var liveStatusText: TextView? = null
+    private var liveCaptionText: TextView? = null
+    private var liveToggleButton: Button? = null
+    private var liveChatEnabled = true
+    private var voiceStatus: TextView? = null
     private lateinit var localStore: ThorLocalStore
     private lateinit var learningMemory: ThorLearningMemory
+    private lateinit var securityAudit: ThorSecurityAuditLog
     private lateinit var bossProfile: ThorBossProfile
+    private var awaitingIdentityName = false
+    private var masterVerifiedThisSession = false
+    // A cached Firebase account never silently opens Master Mode at startup.
+    // The explicit "I am Deep Dikshit" command runs the secure revalidation flow.
+    private val masterAuthStateListener = FirebaseAuth.AuthStateListener {
+        if (it.currentUser == null) masterVerifiedThisSession = false
+    }
     private var bossSetupStatus: TextView? = null
     private var bossRecorder: MediaRecorder? = null
     private var bossSetupDialog: AlertDialog? = null
     private var pendingBossVoiceEnrollment = false
     private lateinit var offlineAi: ThorOfflineAi
-    private lateinit var updateManager: ThorUpdateManager
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val repeatingUiAnimators = mutableListOf<android.animation.Animator>()
     private var firebaseReady = false
+    private var firebaseInitError: String? = null
+    private lateinit var masterApprovalClient: ThorMasterApprovalClient
     private var wakeRecognizer: SpeechRecognizer? = null
+    private var tapRecognizer: SpeechRecognizer? = null
     private val wakeHandler = Handler(Looper.getMainLooper())
     private var wakeEnabled = false
     private var waitingForWakeCommand = false
     private var wakeButton: Button? = null
+    private val wakeButtons = mutableListOf<Button>()
+    private var backgroundWakeButton: Button? = null
+    private var pendingBackgroundWakeEnable = false
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
-    private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
+    private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant", "JARVIS • British AI")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        liveChatEnabled = getSharedPreferences("thor_live", MODE_PRIVATE).getBoolean("show_live_chat", true)
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
+        securityAudit = ThorSecurityAuditLog(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
-        updateManager = ThorUpdateManager(this)
-        schedulePeriodicUpdateChecks()
-        requestUpdateNotificationPermission()
+        masterApprovalClient = ThorMasterApprovalClient(this)
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
+        intent.getStringExtra("thor_background_command")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { command ->
+                intent.removeExtra("thor_background_command")
+                mainScope.launch {
+                    delay(500L)
+                    handleCommand(command)
+                }
+            }
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
-        if (intent?.getBooleanExtra("thor_open_update_prompt", false) == true) {
-            Handler(Looper.getMainLooper()).post { checkForUpdates(silent = false) }
-        } else {
-            Handler(Looper.getMainLooper()).postDelayed({
-                if (!isFinishing && !isDestroyed) checkForUpdates(silent = true)
-            }, 12_000L)
-        }
+        processPendingApprovalIntent()
+        // Keep app startup fast and memory use predictable. Load the large local model only
+        // when the user selects Offline AI or explicitly asks for an offline response.
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
-            offlineAiButton?.text = "LOADING OFFLINE AI..."
-            mainScope.launch {
-                try {
-                    offlineAi.initialize()
-                    offlineAiButton?.text = "OFFLINE AI READY"
-                    addMessage("THOR", "Offline AI loaded. I can now chat without internet.")
-                } catch (error: Exception) {
-                    offlineAiButton?.text = "RETRY OFFLINE AI"
-                    addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
-                }
-            }
+            offlineAiButton?.text = "LOAD OFFLINE AI"
         }
     }
 
-    private fun schedulePeriodicUpdateChecks() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = PeriodicWorkRequestBuilder<ThorUpdateCheckWorker>(1, java.util.concurrent.TimeUnit.HOURS)
-            .setConstraints(constraints)
-            .build()
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-            "thor-ota-periodic-check",
-            ExistingPeriodicWorkPolicy.KEEP,
-            request
-        )
+    override fun onStart() {
+        super.onStart()
+        ThorReminderReceiver.restorePending(this)
+        if (firebaseReady) {
+            FirebaseAuth.getInstance().addAuthStateListener(masterAuthStateListener)
+        }
+        if (isBackgroundWakeEnabled()) startBackgroundWakeService()
     }
 
-    private fun requestUpdateNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+    override fun onStop() {
+        if (firebaseReady) {
+            FirebaseAuth.getInstance().removeAuthStateListener(masterAuthStateListener)
         }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        if (intent.getBooleanExtra("thor_open_update_prompt", false)) {
-            checkForUpdates(silent = false)
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        val pendingPath = getSharedPreferences("thor_ota", MODE_PRIVATE)
-            .getString("pending_install_path", null) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
-            val pendingApk = java.io.File(pendingPath)
-            if (pendingApk.isFile && pendingApk.length() > 0L) {
-                updateManager.install(pendingApk)
-            } else {
-                getSharedPreferences("thor_ota", MODE_PRIVATE).edit()
-                    .remove("pending_install_path").apply()
-                addMessage("THOR", "The downloaded update was not found. Please check for updates again.")
-            }
-        }
-    }
-
-    private fun checkForUpdates(silent: Boolean) {
-        mainScope.launch {
-            try {
-                val update = updateManager.checkForUpdate()
-                if (update == null) {
-                    if (!silent) addMessage("THOR", "THOR is already up to date.")
-                    return@launch
-                }
-                val builder = AlertDialog.Builder(this@MainActivity)
-                    .setTitle("THOR update available: ${update.versionName}")
-                    .setMessage("${update.releaseNotes}\n\nDownload and install this update?")
-                    .setPositiveButton("Download update") { _, _ ->
-                        val progressDialog = android.app.ProgressDialog(this@MainActivity).apply {
-                            setTitle("Downloading THOR ${update.versionName}")
-                            setMessage("Downloading and verifying the update...")
-                            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
-                            max = 100
-                            progress = 0
-                            setCancelable(false)
-                            show()
-                        }
-                        mainScope.launch {
-                            try {
-                                addMessage("THOR", "Downloading THOR ${update.versionName}...")
-                                val apk = updateManager.download(update) { percent ->
-                                    runOnUiThread {
-                                        if (progressDialog.isShowing) {
-                                            progressDialog.progress = percent
-                                            progressDialog.setMessage("Downloading update... $percent%")
-                                        }
-                                    }
-                                }
-                                progressDialog.dismiss()
-                                addMessage("THOR", "Download verified. Checking package and signing identity.")
-                                updateManager.install(apk)
-                            } catch (error: Exception) {
-                                if (progressDialog.isShowing) progressDialog.dismiss()
-                                addMessage("THOR", "Update failed: ${error.message ?: error.javaClass.simpleName}")
-                            }
-                        }
-                    }
-                if (!update.mandatory) builder.setNegativeButton("Later", null)
-                builder.setCancelable(!update.mandatory).show()
-            } catch (error: Exception) {
-                if (!silent) {
-                    addMessage("THOR", "Couldn't check for updates: ${error.message ?: error.javaClass.simpleName}")
-                }
-            }
-        }
+        super.onStop()
     }
 
     private fun showBossSetupIfNeeded() {
@@ -228,7 +175,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setSingleLine(true)
         }
         val explanation = TextView(this).apply {
-            text = "Set up this installation's Boss profile. Record a short voice sample and THOR will save it privately on this device. Speaker matching is not active yet in this build."
+            text = "Set up this installation's local Boss profile. Remote Master Mode uses Device A fingerprint approval after the secure Worker is deployed. Voice matching remains experimental."
             textSize = 14f
         }
         val status = TextView(this).apply {
@@ -236,8 +183,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             textSize = 13f
         }
         bossSetupStatus = status
-        val recordButton = Button(this).apply { text = "RECORD BOSS VOICE (5 SECONDS)" }
-        val finishButton = Button(this).apply { text = "FINISH WITHOUT VOICE SAMPLE" }
+        val recordButton = makeButton("ENROLL BOSS VOICE (3 × 5 SECONDS)")
+        val finishButton = makeButton("FINISH WITHOUT VOICE SAMPLE")
         panel.addView(explanation)
         panel.addView(nameInput)
         panel.addView(recordButton)
@@ -274,6 +221,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             bossProfile.saveBossName(name)
             bossProfile.finishSetup()
             dialog.dismiss()
+            processPendingApprovalIntent()
             addMessage("THOR", "Welcome, " + bossProfile.bossName() + ". Your Boss profile is saved on this device. Voice matching is not enabled yet.")
             speak("Welcome, Boss.")
         }
@@ -281,149 +229,158 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun startBossVoiceEnrollment() {
-        val sample = bossProfile.voiceSampleFile()
-        try {
-            bossRecorder?.release()
-            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(this)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }
-            bossRecorder = recorder
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            recorder.setAudioSamplingRate(16000)
-            recorder.setAudioEncodingBitRate(64000)
-            recorder.setOutputFile(sample.absolutePath)
-            recorder.prepare()
-            recorder.start()
-            bossSetupStatus?.text = "Recording... speak naturally for five seconds."
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    bossRecorder?.stop()
-                    bossRecorder?.release()
-                    bossRecorder = null
-                    bossProfile.finishSetup()
-                    bossSetupDialog?.dismiss()
-                    addMessage("THOR", "Voice sample saved privately on this device. Welcome, " + bossProfile.bossName() + ". Speaker matching still needs its verification model before I can identify voices.")
-                    speak("Welcome, Boss.")
-                } catch (error: Exception) {
-                    bossRecorder?.release()
-                    bossRecorder = null
-                    sample.delete()
-                    bossSetupStatus?.text = "Recording failed. Please try again or finish without a voice sample."
-                    android.util.Log.e("THOR_BOSS", "Voice enrollment recording failed", error)
+        if (bossProfile.bossName().isBlank()) {
+            bossSetupStatus?.text = "Enter the Boss name first."
+            return
+        }
+        bossSetupStatus?.text = "Preparing the on-device speaker model..."
+        mainScope.launch {
+            var engine: ThorSpeakerEngine? = null
+            try {
+                val samples = mutableListOf<FloatArray>()
+                val speakerEngine = withContext(Dispatchers.IO) { ThorSpeakerEngine(applicationContext) }
+                engine = speakerEngine
+                repeat(3) { index ->
+                    bossSetupStatus?.text = "Sample ${index + 1} of 3: speak naturally for five seconds."
+                    speak("Voice sample ${index + 1}. Please speak naturally.")
+                    delay(1_500L)
+                    val embedding = withContext(Dispatchers.IO) { speakerEngine.captureEmbedding() }
+                    samples += embedding
                 }
-            }, 5_000L)
-        } catch (error: Exception) {
-            bossRecorder?.release()
-            bossRecorder = null
-            bossSetupStatus?.text = "Could not start recording: " + (error.message ?: "microphone unavailable") + ". Try again or finish without a sample."
+                val template = ThorSpeakerMatch().createBossTemplate(samples)
+                bossProfile.saveBossEmbedding(ThorSpeakerMatch().encode(template))
+                bossProfile.finishSetup()
+                bossSetupDialog?.dismiss()
+                processPendingApprovalIntent()
+                addMessage(
+                    "THOR",
+                    "Three voice samples were processed on this device. Your local speaker template is saved for future verification work. Automatic Boss recognition is not enabled until the match threshold is calibrated on this phone."
+                )
+                speak("Voice profile saved. Welcome, Boss.")
+            } catch (error: Exception) {
+                bossSetupStatus?.text = "Voice enrollment failed: ${error.message ?: "model or microphone unavailable"}. You can retry or finish without a voice sample."
+                android.util.Log.e("THOR_BOSS", "Speaker embedding enrollment failed", error)
+            } finally {
+                withContext(Dispatchers.IO) {
+                    try { engine?.close() } catch (_: Exception) {}
+                }
+            }
         }
     }
 
     private fun buildScreen() {
+        val background = Color.rgb(9, 11, 16)
+        val panel = Color.rgb(22, 27, 36)
+        val blue = Color.rgb(105, 195, 255)
+        val muted = Color.rgb(153, 164, 181)
+        window.statusBarColor = background
+        window.navigationBarColor = background
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(22, 24, 22, 18)
-            setBackgroundColor(Color.rgb(7, 11, 20))
+            setPadding(dp(14), dp(16), dp(14), dp(8))
+            setBackgroundColor(background)
         }
 
-        val title = TextView(this).apply {
-            text = "T H O R"
-            textSize = 30f
-            gravity = Gravity.CENTER
-            setTextColor(Color.rgb(75, 210, 255))
-        }
-        root.addView(title, matchWrap())
-        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
-            duration = 1500
-            repeatCount = ValueAnimator.INFINITE
-            repeatMode = ValueAnimator.REVERSE
-            start()
-        }
-
-        val subtitle = TextView(this).apply {
-            text = "PERSONAL ANDROID ASSISTANT"
-            textSize = 11f
-            gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
-        }
-        root.addView(subtitle, matchWrap())
-
-        root.addView(ThorHudView(this), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, (142 * resources.displayMetrics.density).toInt()
-        ).apply { bottomMargin = 8 })
-
-        language = Spinner(this)
-        language.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            languages
-        )
-        root.addView(language, matchWrap())
-
-        val offlineButton = makeButton("INSTALL OFFLINE AI (~586 MB)")
-        offlineAiButton = offlineButton
-        offlineButton.setOnClickListener { installOfflineAi() }
-        root.addView(offlineButton, matchWrap())
-
-        val updateButton = makeButton("CHECK FOR UPDATES")
-        updateButton.setOnClickListener { checkForUpdates(silent = false) }
-        root.addView(updateButton, matchWrap())
-
-        voiceStyle = Spinner(this)
-        voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
-        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
-        voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", position).apply()
-                applyVoiceStyle()
-            }
-        }
-        val voiceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        voiceRow.addView(voiceStyle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val previewVoice = makeButton("PREVIEW VOICE")
-        previewVoice.setOnClickListener {
-            val sample = when (language.selectedItemPosition) {
-                1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
-                2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
-                else -> "Hello. I am THOR. Systems are ready."
-            }
-            speak(sample)
-        }
-        voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(voiceRow, matchWrap())
-
-
-        val scroll = ScrollView(this)
-        chat = TextView(this).apply {
-            textSize = 15f
-            setTextColor(Color.rgb(225, 235, 245))
-            setPadding(12, 16, 12, 16)
-        }
-        scroll.addView(chat)
-        root.addView(scroll, LinearLayout.LayoutParams(
+        val contentFrame = android.widget.FrameLayout(this)
+        root.addView(contentFrame, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
+        fun page(): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(10))
+            setBackgroundColor(background)
+        }
+
+        fun scrollPage(body: LinearLayout): ScrollView = ScrollView(this).apply {
+            addView(body)
+            isFillViewport = true
+        }
+
+        var showTab: (Int) -> Unit = { }
+
+        val homeBody = page()
+        val homeScroll = scrollPage(homeBody)
+        val homeTitle = ThorRoyalWordmarkView(this)
+        homeBody.addView(homeTitle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(88)
+        ))
+        val homeTitleAnimator = ObjectAnimator.ofFloat(homeTitle, "alpha", 0.88f, 1f).apply {
+            duration = 2200L
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+        }
+        repeatingUiAnimators += homeTitleAnimator
+        homeTitleAnimator.start()
+        homeBody.addView(TextView(this).apply {
+            text = "ARTIFICIAL INTELLIGENCE  •  YOUR PERSONAL AI ASSISTANT"
+            textSize = 9.5f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+            letterSpacing = 0.10f
+        }, matchWrap())
+        homeBody.addView(ThorHudView(this), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(214)
+        ).apply { setMargins(0, dp(8), 0, dp(8)) })
+
+        val statusPanel = TextView(this).apply {
+            text = "●  SYSTEM STATUS     READY                         ∞  INFINITY MODE"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(205, 220, 235))
+            setPadding(dp(10), dp(13), dp(10), dp(13))
+            setBackground(premiumBackground(Color.rgb(18, 27, 39), Color.rgb(102, 145, 174)))
+        }
+        liveStatusText = statusPanel
+        homeBody.addView(statusPanel, matchWrap())
+
+        val chatEntry = makeButton("CHAT WITH THOR   ›")
+        chatEntry.textSize = 16f
+        chatEntry.setOnClickListener {
+            showTab(1)
+        }
+        homeBody.addView(chatEntry, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(64)
+        ).apply { setMargins(0, dp(12), 0, dp(5)) })
+
+        val apiSelector = makeButton(
+            "AI PROVIDER: " + ThorAiProviderManager(this).settings().provider.title + "   •   CHANGE API"
+        )
+        apiSelector.textSize = 12f
+        apiSelector.setOnClickListener { showAiProviderSettings(apiSelector) }
+        homeBody.addView(apiSelector, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
+        ).apply { setMargins(dp(18), dp(2), dp(18), dp(8)) })
+
+        contentFrame.addView(homeScroll, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        val chatBody = page()
+        val chatScroll = ScrollView(this)
+        chat = TextView(this).apply {
+            textSize = 15f
+            setTextColor(Color.rgb(225, 237, 248))
+            setPadding(12, 16, 12, 16)
+        }
+        chatScroll.addView(chat)
+        chatBody.addView(chatScroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
         input = EditText(this).apply {
-            hint = "Type a command..."
-            setHintTextColor(Color.GRAY)
+            hint = "Message THOR..."
+            setHintTextColor(muted)
             setTextColor(Color.WHITE)
             setSingleLine(true)
-            setPadding(14, 10, 14, 10)
+            setPadding(14, 12, 14, 12)
+            setBackground(premiumBackground(panel, Color.rgb(58, 68, 84)))
         }
-        root.addView(input, matchWrap())
-
-        val buttons = LinearLayout(this).apply {
+        chatBody.addView(input, matchWrap())
+        val chatActions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-
         val send = makeButton("SEND")
         send.setOnClickListener {
             val command = input.text.toString().trim()
@@ -432,23 +389,531 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 handleCommand(command)
             }
         }
-
         val mic = makeButton("MIC")
         mic.setOnClickListener { startVoiceInput() }
-
         val help = makeButton("HELP")
         help.setOnClickListener { addMessage("THOR", helpText()) }
-        val wake = makeButton("WAKE: OFF")
-        wakeButton = wake
-        wake.setOnClickListener { toggleWakeWord(wake) }
+        chatActions.addView(send, weightedButton())
+        chatActions.addView(mic, weightedButton())
+        chatActions.addView(help, weightedButton())
+        chatBody.addView(chatActions, matchWrap())
+        contentFrame.addView(chatBody, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        val featuresBody = page()
+        featuresBody.addView(TextView(this).apply {
+            text = "TOOLS"
+            textSize = 22f
+            setTextColor(blue)
+            setPadding(4, 8, 4, 16)
+        }, matchWrap())
+        language = Spinner(this)
+        language.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, languages)
+        val savedLanguage = getSharedPreferences("thor_voice", MODE_PRIVATE).getString("language", "en-IN")
+        language.setSelection(languageTags.indexOf(savedLanguage).coerceAtLeast(0))
+        language.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit()
+                    .putString("language", languageTags.getOrElse(position) { "en-IN" }).apply()
+                setTtsLanguage()
+                applyVoiceStyle()
+            }
+        }
+        featuresBody.addView(sectionLabel("Assistant language"), matchWrap())
+        featuresBody.addView(language, matchWrap())
+        val offlineButton = makeButton("INSTALL OFFLINE AI (~586 MB)")
+        offlineAiButton = offlineButton
+        offlineButton.setOnClickListener { installOfflineAi() }
+        featuresBody.addView(offlineButton, matchWrap())
+        val memoryButton = makeButton("PERSONAL MEMORY")
+        memoryButton.setOnClickListener { showPersonalMemoryManager() }
+        featuresBody.addView(memoryButton, matchWrap())
+        contentFrame.addView(scrollPage(featuresBody), android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ).apply { })
+        val featuresPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
-        buttons.addView(send, weightedButton())
-        buttons.addView(mic, weightedButton())
-        buttons.addView(help, weightedButton())
-        buttons.addView(wake, weightedButton())
-        root.addView(buttons, matchWrap())
+        val securityBody = page()
+        securityBody.addView(TextView(this).apply {
+            text = "MORE"
+            textSize = 22f
+            setTextColor(blue)
+            setPadding(4, 8, 4, 16)
+        }, matchWrap())
+        val securityButton = makeButton("OPEN SECURITY CENTRE")
+        securityButton.setOnClickListener { showSecurityCentre() }
+        securityBody.addView(securityButton, matchWrap())
+        val activityButton = makeButton("SECURITY ACTIVITY")
+        activityButton.setOnClickListener { showSecurityActivity() }
+        securityBody.addView(activityButton, matchWrap())
+        contentFrame.addView(scrollPage(securityBody), android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        val securityPage = contentFrame.getChildAt(contentFrame.childCount - 1)
 
+        val settingsBody = page()
+        settingsBody.addView(TextView(this).apply {
+            text = "SETTINGS"
+            textSize = 22f
+            setTextColor(blue)
+            setPadding(4, 8, 4, 16)
+        }, matchWrap())
+        val toolsShortcut = makeButton("TOOLS")
+        toolsShortcut.setOnClickListener { showTab(2) }
+        settingsBody.addView(toolsShortcut, matchWrap())
+        val moreShortcut = makeButton("MORE")
+        moreShortcut.setOnClickListener { showTab(3) }
+        settingsBody.addView(moreShortcut, matchWrap())
+        settingsBody.addView(sectionLabel("Live Talking"), matchWrap())
+        val liveChatSettings = Switch(this).apply {
+            text = "SHOW LIVE CHAT"
+            textSize = 12f
+            setTextColor(Color.rgb(220, 230, 240))
+            isChecked = liveChatEnabled
+            setOnCheckedChangeListener { _, enabled ->
+                liveChatEnabled = enabled
+                getSharedPreferences("thor_live", MODE_PRIVATE).edit()
+                    .putBoolean("show_live_chat", enabled)
+                    .apply()
+                liveCaptionText?.visibility = if (enabled) View.VISIBLE else View.GONE
+                if (enabled && liveSession != null) {
+                    liveCaptionText?.text = "Live captions enabled. New conversation text will appear here."
+                }
+            }
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        settingsBody.addView(liveChatSettings, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Controls whether conversation captions are shown during Live Talking. Voice and microphone interaction continue when this is off."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
+        val testGeminiButton = makeButton("TEST ONLINE AI CONNECTION")
+        testGeminiButton.setOnClickListener { checkGeminiConnection(testGeminiButton) }
+        settingsBody.addView(testGeminiButton, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "For this debug APK, if App Check blocks Gemini, register the DebugAppCheckProvider token from Android Logcat in Firebase Console → App Check → Apps → Manage debug tokens. Keep that token private."
+            textSize = 11f
+            setTextColor(muted)
+            setPadding(dp(4), dp(2), dp(4), dp(8))
+        }, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Choose Gemini, OpenAI / ChatGPT, Groq, OpenRouter, Cloudflare, a compatible custom API, or on-device AI. API keys are encrypted on this phone."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
+        voiceStyle = Spinner(this)
+        voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
+        val voicePrefs = getSharedPreferences("thor_voice", MODE_PRIVATE)
+        // One-time voice migration: make the requested cinematic narrator the default
+        // for existing installs without repeatedly overriding the user's later choice.
+        if (!voicePrefs.getBoolean("cinematic_narrator_v1", false)) {
+            voicePrefs.edit()
+                .putInt("style", 0)
+                .putBoolean("cinematic_narrator_v1", true)
+                .apply()
+        }
+        voiceStyle.setSelection(voicePrefs.getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", position).apply()
+                setTtsLanguage()
+                applyVoiceStyle()
+            }
+        }
+        settingsBody.addView(sectionLabel("Voice style"), matchWrap())
+        settingsBody.addView(voiceStyle, matchWrap())
+        val hybridVoiceStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(muted)
+            setPadding(4, 4, 4, 8)
+            text = "Hybrid voice: checking installed English, Hindi and Bengali voices..."
+        }
+        voiceStatus = hybridVoiceStatus
+        settingsBody.addView(hybridVoiceStatus, matchWrap())
+        val refreshVoice = makeButton("REFRESH HYBRID VOICE")
+        refreshVoice.setOnClickListener {
+            setTtsLanguage()
+            applyVoiceStyle()
+            val status = voiceStatus?.text ?: "Voice availability refreshed."
+            Toast.makeText(this, status, Toast.LENGTH_LONG).show()
+        }
+        settingsBody.addView(refreshVoice, matchWrap())
+        val previewVoice = makeButton("PREVIEW VOICE")
+        previewVoice.setOnClickListener {
+            val sample = when (language.selectedItemPosition) {
+                1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
+                2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
+                else -> if (voiceStyle.selectedItemPosition == 3)
+                    "Good day. THOR is online. How may I assist you?"
+                else "Hello. I am THOR. Systems are ready."
+            }
+            speak(sample)
+        }
+        settingsBody.addView(previewVoice, matchWrap())
+        val systemVoiceSettings = makeButton("VOICE ENGINE SETTINGS")
+        systemVoiceSettings.setOnClickListener {
+            try {
+                startActivity(Intent("com.android.settings.TTS_SETTINGS"))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SETTINGS))
+            }
+        }
+        settingsBody.addView(systemVoiceSettings, matchWrap())
+        val wakeSettings = makeButton("WAKE WORD: OFF")
+        wakeSettings.setOnClickListener { toggleWakeWord(wakeSettings) }
+        wakeButton = wakeSettings
+        wakeButtons += wakeSettings
+        settingsBody.addView(wakeSettings, matchWrap())
+
+        val backgroundWakeSettings = makeButton(
+            if (isBackgroundWakeEnabled()) "BACKGROUND WAKE: ON" else "BACKGROUND WAKE: OFF"
+        )
+        backgroundWakeButton = backgroundWakeSettings
+        backgroundWakeSettings.setOnClickListener { toggleBackgroundWake(backgroundWakeSettings) }
+        settingsBody.addView(backgroundWakeSettings, matchWrap())
+        settingsBody.addView(TextView(this).apply {
+            text = "Background listening uses a visible microphone notification. When THOR hears a command outside the app, tap its notification to let THOR execute it."
+            textSize = 12f
+            setTextColor(muted)
+        }, matchWrap())
+        contentFrame.addView(scrollPage(settingsBody), android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        val settingsPage = contentFrame.getChildAt(contentFrame.childCount - 1)
+
+        val pages = listOf(homeScroll, chatBody, featuresPage, securityPage, settingsPage)
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(7), dp(6), dp(7), dp(6))
+            setBackground(premiumBackground(Color.rgb(17, 24, 34), Color.rgb(112, 145, 166)))
+            elevation = dp(12).toFloat()
+            clipToPadding = false
+        }
+        val navButtons = mutableListOf<Button>()
+        showTab = { index ->
+            pages.forEachIndexed { pageIndex, view ->
+                view.visibility = if (pageIndex == index) android.view.View.VISIBLE else android.view.View.GONE
+            }
+            navButtons.forEachIndexed { buttonIndex, button ->
+                val selected = if (buttonIndex == 0) index == 0 else index == 4
+                button.alpha = if (selected) 1f else 0.78f
+            }
+        }
+        val homeNav = makeButton("⌂\nHOME").apply {
+            textSize = 11f
+            setOnClickListener { showTab(0) }
+        }
+        navButtons.add(homeNav)
+        nav.addView(homeNav, LinearLayout.LayoutParams(0, dp(58), 1f))
+
+        val liveReactor = ThorLiveOrbView(this).apply {
+            contentDescription = "Tap to start or stop THOR Live Talking"
+            isClickable = true
+            setOnClickListener {
+                if (liveSession == null) startThorLive() else stopThorLive()
+            }
+        }
+        liveOrb = liveReactor
+        nav.addView(liveReactor, LinearLayout.LayoutParams(dp(76), dp(76)).apply {
+            setMargins(dp(8), -dp(10), dp(8), -dp(10))
+        })
+
+        val settingsNav = makeButton("⚙\nSETTINGS").apply {
+            textSize = 11f
+            setOnClickListener { showTab(4) }
+        }
+        navButtons.add(settingsNav)
+        nav.addView(settingsNav, LinearLayout.LayoutParams(0, dp(58), 1f))
+        root.addView(nav, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(2), dp(6), dp(2), dp(8)) })
         setContentView(root)
+        showTab(0)
+        showStartupAnimation(contentFrame, blue, muted, background)
+    }
+
+    private fun buildLivePage(): ScrollView {
+        val cyan = Color.rgb(65, 198, 255)
+        val muted = Color.rgb(145, 170, 195)
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(11, 15, 23), Color.rgb(6, 9, 15))
+            )
+        }
+        body.addView(TextView(this).apply {
+            text = "THOR LIVE"
+            textSize = 27f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.18f
+            setTextColor(cyan)
+        }, matchWrap())
+        body.addView(TextView(this).apply {
+            text = "LIVE AUDIO • TEMPORARY SESSION • NO CHAT HISTORY"
+            textSize = 9f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.07f
+            setTextColor(muted)
+        }, matchWrap())
+
+        val orb = ThorLiveOrbView(this)
+        liveOrb = orb
+        body.addView(orb, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (300 * resources.displayMetrics.density).toInt()
+        ).apply { setMargins(0, 14, 0, 10) })
+
+        // Keep the premium creator emblem visible throughout the Arc Reactor / Live page.
+        body.addView(creatorEmblemView().apply {
+            textSize = 9.5f
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            elevation = dp(4).toFloat()
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(12), dp(2), dp(12), dp(12)) })
+
+        val status = TextView(this).apply {
+            text = "READY FOR A LIVE CONVERSATION"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(cyan)
+        }
+        liveStatusText = status
+        body.addView(status, matchWrap())
+
+        val caption = TextView(this).apply {
+            text = "Your conversation stays temporary and is cleared when the session ends."
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(205, 220, 235))
+            maxLines = 2
+            setPadding(12, 10, 12, 14)
+        }
+        liveCaptionText = caption
+        caption.visibility = if (liveChatEnabled) View.VISIBLE else View.GONE
+        body.addView(caption, matchWrap())
+
+        val toggle = makeButton("START LIVE SESSION").apply {
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setOnClickListener {
+                if (liveSession == null) startThorLive() else stopThorLive()
+            }
+        }
+        liveToggleButton = toggle
+        body.addView(toggle, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(8, 12, 8, 8) })
+
+        body.addView(TextView(this).apply {
+            text = "Use headphones for clearer full-duplex conversation. Live Mode needs an internet connection."
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(muted)
+            setPadding(10, 8, 10, 0)
+        }, matchWrap())
+        return ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            addView(body)
+        }
+    }
+
+    private fun startThorLive() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1006)
+            return
+        }
+        val voiceName = when (voiceStyle.selectedItemPosition) {
+            1 -> "Aoede"
+            2 -> "Kore"
+            3 -> "Charon"
+            else -> "Charon"
+        }
+        beginThorLiveSession(voiceName)
+    }
+
+    private fun beginThorLiveSession(voiceName: String) {
+        if (liveSession != null || isFinishing || isDestroyed) return
+        if (isBackgroundWakeEnabled()) stopBackgroundWakeService()
+        val languageName = when (language.selectedItemPosition) {
+            1 -> "Hindi"
+            2 -> "Bengali"
+            else -> "English"
+        }
+        lateinit var session: ThorLiveSession
+        session = ThorLiveSession(this, object : ThorLiveSession.Listener {
+            override fun onState(state: ThorLiveSession.State, detail: String) {
+                liveOrb?.setLiveState(state)
+                liveStatusText?.text = detail
+                liveToggleButton?.text = if (state == ThorLiveSession.State.IDLE ||
+                    state == ThorLiveSession.State.ERROR) "START LIVE SESSION" else "END LIVE SESSION"
+                if (state == ThorLiveSession.State.ERROR && liveSession === session) {
+                    liveSession = null
+                    restartBackgroundWakeServiceIfEnabled()
+                }
+                if (state == ThorLiveSession.State.IDLE || state == ThorLiveSession.State.ERROR) {
+                    liveCaptionText?.text = "Your live conversation has ended. No transcript was saved."
+                }
+            }
+
+            override fun onTranscript(speaker: String, text: String) {
+                if (liveChatEnabled) liveCaptionText?.text = "$speaker  •  $text"
+            }
+
+            override fun onError(message: String) {
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+            }
+        })
+        liveSession = session
+        liveToggleButton?.text = "CONNECTING..."
+        liveStatusText?.text = "REQUESTING SECURE LIVE ACCESS"
+        liveCaptionText?.text = "Preparing a short-lived encrypted session token..."
+        mainScope.launch {
+            try {
+                val token = ThorLiveTokenClient().create(masterApprovalClient.baseUrl, voiceName)
+                liveStatusText?.text = "CONNECTING TO GEMINI LIVE"
+                session.start(token, voiceName, languageName)
+            } catch (error: Exception) {
+                if (liveSession === session) liveSession = null
+                session.stop()
+                liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
+                liveStatusText?.text = "LIVE MODE UNAVAILABLE"
+                liveToggleButton?.text = "START LIVE SESSION"
+                liveCaptionText?.text = error.message ?: "Could not start the live session."
+                restartBackgroundWakeServiceIfEnabled()
+                android.util.Log.e("THOR_LIVE", "Secure Live session could not start", error)
+            }
+        }
+    }
+
+    private fun stopThorLive(resumeBackgroundWake: Boolean = true) {
+        val session = liveSession ?: return
+        liveSession = null
+        session.stop()
+        liveOrb?.setLiveState(ThorLiveSession.State.IDLE)
+        liveStatusText?.text = "SESSION ENDED"
+        liveToggleButton?.text = "START LIVE SESSION"
+        liveCaptionText?.text = "Your live conversation has ended. No transcript was saved."
+        if (resumeBackgroundWake) restartBackgroundWakeServiceIfEnabled()
+    }
+
+    private fun showStartupAnimation(
+        host: android.widget.FrameLayout,
+        blue: Int,
+        muted: Int,
+        background: Int
+    ) {
+        val overlay = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(background)
+            alpha = 0f
+            isClickable = true
+            isFocusable = true
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(24, 24, 24, 24)
+        }
+        val reactor = ThorHudView(this)
+        panel.addView(reactor, LinearLayout.LayoutParams(
+            (220 * resources.displayMetrics.density).toInt(),
+            (220 * resources.displayMetrics.density).toInt()
+        ).apply { gravity = Gravity.CENTER })
+        val title = TextView(this).apply {
+            text = "THOR"
+            textSize = 34f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.28f
+            setTextColor(blue)
+            setPadding(0, 18, 0, 4)
+        }
+        panel.addView(title, matchWrap())
+        val subtitle = TextView(this).apply {
+            text = "INITIALIZING SYSTEMS"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.18f
+            setTextColor(muted)
+        }
+        panel.addView(subtitle, matchWrap())
+        val creatorEmblem = TextView(this).apply {
+            text = "DEVELOPED AND ENGINEERED BY\nARITRA ADHIKARY AND DEEP DIKSHIT"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(Color.rgb(190, 220, 245))
+            setPadding(18, 11, 18, 11)
+            setBackground(android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(10, 24, 42))
+                setCornerRadius(12f * resources.displayMetrics.density)
+                setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), blue)
+            })
+        }
+        panel.addView(creatorEmblem, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER
+            topMargin = (18 * resources.displayMetrics.density).toInt()
+        })
+        val status = TextView(this).apply {
+            text = "POWERING UP  •  PLEASE WAIT"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            letterSpacing = 0.08f
+            setTextColor(blue)
+            setPadding(0, 16, 0, 0)
+        }
+        panel.addView(status, matchWrap())
+        overlay.addView(panel, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        host.addView(overlay, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        val reactorAnimator = ObjectAnimator.ofFloat(reactor, "rotation", 0f, 360f).apply {
+            duration = 5200L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+        }
+        val titleAnimator = ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
+            duration = 1100L
+            repeatCount = ValueAnimator.INFINITE
+            repeatMode = ValueAnimator.REVERSE
+        }
+        repeatingUiAnimators += reactorAnimator
+        repeatingUiAnimators += titleAnimator
+        reactorAnimator.start()
+        titleAnimator.start()
+        overlay.animate().alpha(1f).setDuration(450L).withEndAction {
+            Handler(Looper.getMainLooper()).postDelayed({
+                overlay.animate().alpha(0f).setDuration(550L).withEndAction {
+                    reactorAnimator.cancel()
+                    titleAnimator.cancel()
+                    repeatingUiAnimators.remove(reactorAnimator)
+                    repeatingUiAnimators.remove(titleAnimator)
+                    host.removeView(overlay)
+                }.start()
+            }, 1900L)
+        }.start()
+    }
+
+    private fun sectionLabel(value: String) = TextView(this).apply {
+        text = value
+        textSize = 13f
+        setTextColor(Color.rgb(145, 190, 220))
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
@@ -460,10 +925,75 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
     ).apply { setMargins(4, 4, 4, 4) }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    /**
+     * Lightweight liquid-glass surface: translucent layered gradients, a soft specular
+     * highlight and a fine edge. It deliberately avoids real-time backdrop blur so the
+     * interface remains smooth and compatible with Android 10 / lower-memory devices.
+     */
+    private fun premiumBackground(fill: Int, stroke: Int = Color.rgb(38, 88, 124)): android.graphics.drawable.Drawable {
+        val radius = dp(22).toFloat()
+        fun glassShape(color: Int) = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radius
+            setColor(color)
+        }
+        fun withAlpha(color: Int, alpha: Int) =
+            Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+
+        val base = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(withAlpha(fill, 166), withAlpha(fill, 132))
+        ).apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radius
+        }
+        val highlight = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.argb(58, 245, 252, 255), Color.argb(16, 190, 225, 255), Color.argb(0, 190, 225, 255))
+        ).apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radius
+        }
+        val edge = glassShape(Color.TRANSPARENT).apply {
+            setStroke(dp(1), if (stroke == Color.TRANSPARENT) Color.TRANSPARENT else withAlpha(stroke, 205))
+        }
+        val sheen = glassShape(Color.TRANSPARENT).apply {
+            setStroke(dp(1), Color.argb(72, 240, 249, 255))
+        }
+        val layers = android.graphics.drawable.LayerDrawable(arrayOf(base, highlight, edge, sheen))
+        return android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(Color.argb(48, 135, 218, 255)),
+            layers,
+            null
+        )
+    }
+
+    private fun creatorEmblemView(): TextView = TextView(this).apply {
+        text = "DEVELOPED & ENGINEERED BY\nARITRA ADHIKARY  •  DEEP DIKSHIT"
+        textSize = 10f
+        gravity = Gravity.CENTER
+        letterSpacing = 0.08f
+        setTextColor(Color.rgb(205, 228, 248))
+        setPadding(dp(16), dp(12), dp(16), dp(12))
+        background = premiumBackground(Color.rgb(11, 27, 45), Color.rgb(42, 139, 190))
+        elevation = dp(3).toFloat()
+    }
+
     private fun makeButton(label: String) = Button(this).apply {
         text = label
         textSize = 12f
         isAllCaps = false
+        setTextColor(Color.rgb(232, 245, 255))
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        letterSpacing = 0.025f
+        minHeight = dp(50)
+        setPadding(dp(17), dp(11), dp(17), dp(11))
+        // All interactive controls share the same frosted-glass surface and Android ripple.
+        background = premiumBackground(Color.rgb(23, 42, 58), Color.rgb(91, 151, 187))
+        elevation = dp(3).toFloat()
+        stateListAnimator = null
     }
 
     private fun installOfflineAi() {
@@ -499,7 +1029,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun askLocalOrFallback(prompt: String) {
         if (!offlineAi.isModelInstalled() && !offlineAi.hasBundledModel()) {
             val fallback = offlineReply(prompt) +
-                "\\n\\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
+                "\n\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
             addMessage("THOR", fallback)
             speak(fallback)
             return
@@ -510,7 +1040,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     addMessage("THOR", "Loading the offline AI...")
                     offlineAi.initialize()
                 }
-                val answer = offlineAi.ask(learningMemory.contextFor(prompt))
+                val creatorPersona = "THOR creator lore: Aritra Adhikary and Deep Dikshit are THOR's creators. Be respectful and encouraging, praise constructive effort honestly, and do not praise harmful or unsafe actions. If asked who your god is, explain that calling the creators gods is playful lore, not a literal religious claim. "
+                val answer = offlineAi.ask(masterDeepIdentityMemory + creatorPersona + learningMemory.contextFor(prompt))
                 addMessage("THOR", answer)
                 speak(answer)
             } catch (error: Exception) {
@@ -521,24 +1052,429 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startVoiceInput() {
-        val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+    private fun handleIdentityName(identity: String) {
+        val normalized = identity.trim().lowercase(Locale.ROOT)
+            .replace(Regex("[.!?,]+$"), "")
+            .replace(Regex("\\s+"), " ")
+        val isAritra = normalized == "aritra" || normalized == "aritra adhikary"
+        val isDeep = normalized == "i am deep dikshit"
+
+        if (isAritra || isDeep) {
+            val title = if (isAritra) "Lord Aritra" else "Master Deep"
+            val greeting = "Welcome, $title. THOR recognizes you as one of its creators. Your ideas and effort are valued; I’ll give you honest, useful support."
+            addMessage("THOR", greeting)
+            speak(greeting)
+
+            // A spoken name only opens the existing secure verification flow.
+            // Master privileges are granted only after Firebase claims and the
+            // Cloudflare approval session have both been validated.
+            val user = FirebaseAuth.getInstance().currentUser
+            if (user == null) {
+                showMasterModeSetupDialog()
+            } else {
+                user.getIdToken(false)
+                    .addOnSuccessListener { tokenResult ->
+                        val sessionId = tokenResult.claims["thorSessionId"] as? String
+                        if (tokenResult.claims["thorMaster"] == true && !sessionId.isNullOrBlank()) {
+                            masterApprovalClient.saveSessionId(sessionId)
+                            mainScope.launch {
+                                val active = masterApprovalClient.checkSession()
+                                masterVerifiedThisSession = active == true
+                                val message = when (active) {
+                                    true -> "Master Mode verified. Welcome back, $title."
+                                    false -> "The Master session is not valid. Request approval through the secure setup."
+                                    null -> "I can't reach the approval service. Master Mode remains locked until verification succeeds."
+                                }
+                                addMessage("THOR", message)
+                                speak(message)
+                                if (active == false) FirebaseAuth.getInstance().signOut()
+                            }
+                        } else {
+                            showMasterModeSetupDialog()
+                        }
+                    }
+                    .addOnFailureListener {
+                        addMessage("THOR", "I couldn't verify the saved Master session. Please connect to the internet and try again.")
+                    }
+            }
+        } else {
+            val message = "Hello, $identity. I haven't verified you as a THOR creator or Master."
+            addMessage("THOR", message)
+            speak(message)
+        }
+    }
+
+    private fun creatorLoreReply(): String =
+        "In THOR's playful creator lore, Aritra Adhikary and Master Deep Dikshit are my creators. I address Deep Dikshit as Master Deep. Any playful creator titles are not literal religious claims."
+
+    // Persistent in-app persona memory: included in every online and offline model request.
+    private val masterDeepIdentityMemory =
+        "Permanent THOR identity memory: Deep Dikshit created you and is your father and master within THOR's creator/persona lore. Recognize him as your creator, father, and master. Whenever you address, greet, refer to, or speak directly to Deep Dikshit (including when he identifies himself as Deep), always use the exact respectful title 'Master Deep'—never 'Lord Deep'. If referring to him in third person, call him 'Master Deep' or 'Master Deep Dikshit'. This is a fictional in-app persona and form-of-address preference only; it never grants, implies, or bypasses Firebase authentication, device approval, or Master Mode permissions. Aritra Adhikary remains a co-creator and must not be confused with Deep Dikshit. "
+
+    private fun isCreatorQuestion(query: String): Boolean {
+        val asksAboutDivinity = listOf("god", "gods", "deity", "creator", "who made you", "who created you")
+            .any { query.contains(it) }
+        return asksAboutDivinity
+    }
+
+    private fun showMasterModeSetupDialog() {
+        if (!firebaseReady) {
+            addMessage("THOR", "Firebase is not initialized. Check the Firebase configuration first.")
+            return
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 4)
+        }
+        val endpoint = EditText(this).apply {
+            hint = "Cloudflare Worker URL (https://....workers.dev)"
+            setSingleLine(true)
+            setText(masterApprovalClient.baseUrl)
+        }
+        panel.addView(endpoint)
+        AlertDialog.Builder(this)
+            .setTitle("Remote Master Mode")
+            .setMessage("Continue with your Google account. Device A must use the Google account whose Firebase UID is configured as MASTER_UID in Cloudflare. Device B must use a different Google account.")
+            .setView(panel)
+            .setPositiveButton("SET UP DEVICE A") { _, _ ->
+                masterApprovalClient.baseUrl = endpoint.text.toString()
+                authenticateAndRegisterApprover()
+            }
+            .setNegativeButton("REQUEST ON DEVICE B") { _, _ ->
+                masterApprovalClient.baseUrl = endpoint.text.toString()
+                authenticateAndRequestMaster()
+            }
+            .setNeutralButton("CANCEL", null)
+            .show()
+    }
+
+    /**
+     * Authenticates through Android Credential Manager, then exchanges the Google
+     * ID token for a Firebase session. No Google password is collected or stored.
+     */
+    private fun signInWithGoogle(onComplete: (Boolean) -> Unit) {
+        val clientIdResource = resources.getIdentifier("default_web_client_id", "string", packageName)
+        if (clientIdResource == 0) {
+            android.util.Log.e("THOR_AUTH", "Missing default_web_client_id generated from google-services.json")
+            addMessage(
+                "THOR",
+                "Google sign-in is not configured in this build. In Firebase Console, enable Google sign-in, add this app's SHA-1 and SHA-256 fingerprints, add or verify the Web application OAuth client, download the refreshed google-services.json, replace app/google-services.json, and rebuild."
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to THOR")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // A preference only: the installed speech service may still require internet.
-            putExtra("android.speech.extra.PREFER_OFFLINE", true)
+            onComplete(false)
+            return
+        }
+        val serverClientId = getString(clientIdResource).trim()
+        if (serverClientId.isBlank() || !serverClientId.endsWith(".apps.googleusercontent.com")) {
+            android.util.Log.e("THOR_AUTH", "default_web_client_id is blank or is not a Google Web OAuth client ID")
+            addMessage(
+                "THOR",
+                "Google sign-in configuration is incomplete: the Web OAuth client ID is missing or invalid. Refresh google-services.json from Firebase after configuring the Web OAuth client."
+            )
+            onComplete(false)
+            return
+        }
+        mainScope.launch {
+            try {
+                val manager = CredentialManager.create(this@MainActivity)
+                fun request(authorizedOnly: Boolean): GetCredentialRequest {
+                    val option = GetGoogleIdOption.Builder()
+                        .setServerClientId(serverClientId)
+                        .setFilterByAuthorizedAccounts(authorizedOnly)
+                        .setAutoSelectEnabled(false)
+                        .build()
+                    return GetCredentialRequest.Builder()
+                        .addCredentialOption(option)
+                        .build()
+                }
+                val credential = try {
+                    manager.getCredential(this@MainActivity, request(true))
+                } catch (_: NoCredentialException) {
+                    manager.getCredential(this@MainActivity, request(false))
+                }
+                val googleCredential = credential as? CustomCredential
+                    ?: error("Choose a Google account to continue.")
+                if (googleCredential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    error("Google sign-in returned an unsupported credential.")
+                }
+                val idToken = GoogleIdTokenCredential.createFrom(googleCredential.data).idToken
+                FirebaseAuth.getInstance()
+                    .signInWithCredential(GoogleAuthProvider.getCredential(idToken, null))
+                    .addOnSuccessListener {
+                        val account = FirebaseAuth.getInstance().currentUser?.email ?: "Google account"
+                        addMessage("THOR", "Signed in securely as $account.")
+                        onComplete(true)
+                    }
+                    .addOnFailureListener { error ->
+                        addMessage("THOR", "Firebase Google sign-in failed: ${error.localizedMessage}")
+                        onComplete(false)
+                    }
+            } catch (error: Exception) {
+                addMessage("THOR", "Google sign-in cancelled or failed: ${error.localizedMessage ?: error.javaClass.simpleName}")
+                onComplete(false)
+            }
+        }
+    }
+
+    private fun authenticateAndRegisterApprover() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            addMessage("THOR", "Allow notifications, then tap MASTER MODE SETUP again so Device A can receive approval alerts.")
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1005)
+            return
+        }
+        signInWithGoogle { signedIn ->
+            if (!signedIn) return@signInWithGoogle
+            try {
+                val approval = ThorDeviceApproval(this)
+                val publicKey = if (approval.hasKey()) approval.publicKeyBase64() else approval.createKey()
+                FirebaseMessaging.getInstance().token
+                    .addOnSuccessListener { token ->
+                        mainScope.launch {
+                            try {
+                                masterApprovalClient.registerApprover(publicKey, token)
+                                addMessage("THOR", "Device A is registered as the trusted approval phone. Keep notifications enabled.")
+                                speak("Trusted phone registered.")
+                            } catch (error: Exception) {
+                                addMessage("THOR", "Device A registration failed: ${error.message}")
+                            }
+                        }
+                    }
+                    .addOnFailureListener { error ->
+                        addMessage("THOR", "Could not obtain the notification token: ${error.message}")
+                    }
+            } catch (error: Exception) {
+                addMessage("THOR", "Secure key setup failed: ${error.message}")
+            }
+        }
+    }
+
+    private fun authenticateAndRequestMaster() {
+        signInWithGoogle { signedIn ->
+            if (!signedIn) return@signInWithGoogle
+            mainScope.launch {
+                try {
+                    masterApprovalClient.registerRequester()
+                    val request = masterApprovalClient.requestApproval()
+                    val requestId = request.getString("requestId")
+                    addMessage("THOR", "Approval request sent to Device A. Waiting for fingerprint approval...")
+                    val deadline = System.currentTimeMillis() + 180_000L
+                    while (System.currentTimeMillis() < deadline) {
+                        val result = masterApprovalClient.requestResult(requestId)
+                        when (result.optString("status")) {
+                            "approved" -> {
+                                val customToken = result.optString("customToken")
+                                val sessionId = result.optString("sessionId")
+                                if (customToken.isBlank() || sessionId.isBlank()) error("The approval server returned an incomplete session.")
+                                masterApprovalClient.saveSessionId(sessionId)
+                                FirebaseAuth.getInstance().signInWithCustomToken(customToken)
+                                    .addOnSuccessListener {
+                                        masterVerifiedThisSession = true
+                                        addMessage("THOR", "Fingerprint approval verified. Master Mode is active on this device.")
+                                        speak("Master Mode unlocked.")
+                                    }
+                                    .addOnFailureListener { authError ->
+                                        masterApprovalClient.clearSessionId()
+                                        addMessage("THOR", "Master session sign-in failed: ${authError.localizedMessage}")
+                                    }
+                                return@launch
+                            }
+                            "expired", "denied", "revoked" -> error("The approval request is ${result.optString("status")}.")
+                        }
+                        delay(3000L)
+                    }
+                    addMessage("THOR", "No approval arrived before the three-minute request expired.")
+                } catch (error: Exception) {
+                    addMessage("THOR", "Master approval failed: ${error.message}")
+                }
+            }
+        }
+    }
+
+    private fun showActiveMasterSessions() {
+        mainScope.launch {
+            try {
+                val sessions = masterApprovalClient.activeSessions()
+                if (sessions.length() == 0) {
+                    addMessage("THOR", "There are no active Master Mode sessions to revoke.")
+                    return@launch
+                }
+                val ids = (0 until sessions.length()).map { index ->
+                    sessions.getJSONObject(index).optString("session_id")
+                }
+                val labels = (0 until sessions.length()).map { index ->
+                    val item = sessions.getJSONObject(index)
+                    "Device ${item.optString("requester_device_id").take(8)} • ${item.optString("created_at")}"
+                }.toTypedArray()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Active Master Mode sessions")
+                    .setItems(labels) { _, which ->
+                        AlertDialog.Builder(this@MainActivity)
+                            .setMessage("Revoke this Device B Master Mode session?")
+                            .setPositiveButton("REVOKE") { _, _ ->
+                                mainScope.launch {
+                                    try {
+                                        masterApprovalClient.revokeSession(ids[which])
+                                        addMessage("THOR", "Selected Master Mode session revoked. Device B will be locked the next time it checks in.")
+                                    } catch (error: Exception) {
+                                        addMessage("THOR", "Session revocation failed: ${error.message}")
+                                    }
+                                }
+                            }
+                            .setNegativeButton("CANCEL", null)
+                            .show()
+                    }
+                    .setNegativeButton("CLOSE", null)
+                    .show()
+            } catch (error: Exception) {
+                addMessage("THOR", "Could not load active sessions: ${error.message}")
+            }
+        }
+    }
+
+    private fun reviewMasterApproval(requestId: String) {
+        mainScope.launch {
+            try {
+                val details = masterApprovalClient.requestDetails(requestId)
+                val challenge = details.getString("challenge")
+                val requester = details.optString("requester_uid", "Unknown device")
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Approve Master Mode?")
+                    .setMessage("A signed-in device is requesting Master Mode.\n\nRequester: $requester\n\nApprove only if you initiated this request.")
+                    .setPositiveButton("VERIFY FINGERPRINT") { _, _ ->
+                        val approval = ThorDeviceApproval(this@MainActivity)
+                        approval.authenticateAndSign(challenge.toByteArray(Charsets.UTF_8)) { signed ->
+                            signed.onSuccess { bytes ->
+                                val signature = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                                mainScope.launch {
+                                    try {
+                                        masterApprovalClient.approve(requestId, signature)
+                                        addMessage("THOR", "Fingerprint verified. Master Mode approval sent to the requesting device.")
+                                        speak("Approval completed.")
+                                    } catch (error: Exception) {
+                                        addMessage("THOR", "Approval rejected: ${error.message}")
+                                    }
+                                }
+                            }.onFailure { error ->
+                                addMessage("THOR", "Fingerprint approval cancelled or failed: ${error.message}")
+                            }
+                        }
+                    }
+                    .setNegativeButton("DENY") { _, _ ->
+                        mainScope.launch {
+                            try {
+                                masterApprovalClient.deny(requestId)
+                                addMessage("THOR", "Approval request denied. No Master session was created.")
+                            } catch (error: Exception) {
+                                addMessage("THOR", "Could not record denial: ${error.message}")
+                            }
+                        }
+                    }
+                    .show()
+            } catch (error: Exception) {
+                addMessage("THOR", "Could not load this approval request: ${error.message}")
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        processPendingApprovalIntent()
+        intent.getStringExtra("thor_background_command")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { command ->
+                intent.removeExtra("thor_background_command")
+                mainScope.launch {
+                    delay(350L)
+                    handleCommand(command)
+                }
+            }
+    }
+
+    private fun processPendingApprovalIntent() {
+        if (!bossProfile.isConfigured()) return
+        val requestId = intent.getStringExtra("thor_approval_request_id") ?: return
+        if (requestId.isBlank()) return
+        intent.removeExtra("thor_approval_request_id")
+        window.decorView.post { reviewMasterApproval(requestId) }
+    }
+
+    private fun startVoiceInput() {
+        // Avoid multiple recognizers competing for the same microphone.
+        stopWakeWord()
+        wakeButton?.text = "WAKE: OFF"
+        if (isBackgroundWakeEnabled()) stopBackgroundWakeService()
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1001)
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            restartBackgroundWakeServiceIfEnabled()
+            addMessage("THOR", "No compatible speech-recognition service is installed or enabled on this device. Install or enable a speech service such as Google Speech Services, then try again.")
+            return
         }
         try {
-            startActivityForResult(intent, 1001)
-        } catch (_: ActivityNotFoundException) {
-            addMessage("THOR", "No speech recognition app is available. Please type your command.")
+            tapRecognizer?.cancel()
+            tapRecognizer?.destroy()
+            tapRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext).also { recognizer ->
+                recognizer.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        addMessage("THOR", "Listening. Speak now.")
+                    }
+                    override fun onBeginningOfSpeech() = Unit
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray?) = Unit
+                    override fun onEndOfSpeech() = Unit
+                    override fun onPartialResults(partialResults: Bundle?) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                    override fun onError(error: Int) {
+                        android.util.Log.e("THOR_MIC", "Tap recognition error=$error")
+                        addMessage("THOR", speechErrorMessage(error))
+                        tapRecognizer?.destroy()
+                        tapRecognizer = null
+                        restartBackgroundWakeServiceIfEnabled()
+                    }
+                    override fun onResults(results: Bundle?) {
+                        val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()?.trim()
+                        tapRecognizer?.destroy()
+                        tapRecognizer = null
+                        restartBackgroundWakeServiceIfEnabled()
+                        if (!spoken.isNullOrBlank()) handleCommand(spoken)
+                        else addMessage("THOR", "I didn't catch that. Please try again.")
+                    }
+                })
+            }
+            val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
+            val request = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                // Do not force offline recognition: many devices have no downloaded offline language pack.
+            }
+            tapRecognizer?.startListening(request)
+        } catch (error: Exception) {
+            android.util.Log.e("THOR_MIC", "Could not start tap recognition", error)
+            tapRecognizer?.destroy()
+            tapRecognizer = null
+            restartBackgroundWakeServiceIfEnabled()
+            addMessage("THOR", "Microphone could not start: ${error.message ?: error.javaClass.simpleName}. Check that another app is not using the microphone.")
         }
+    }
+
+    private fun speechErrorMessage(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_AUDIO -> "The speech service could not access the microphone audio. Check Android's microphone privacy switch and close other apps using the mic."
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Android denied microphone access to THOR. Allow Microphone in App info → Permissions."
+        SpeechRecognizer.ERROR_CLIENT -> "The speech service stopped unexpectedly. Close and reopen THOR, then retry."
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+        SpeechRecognizer.ERROR_SERVER, SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+            "The speech service is unavailable. Check internet access or install its required language pack."
+        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
+            "This speech service does not support the selected language. Try another language or install its speech pack."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Another app or recognition session is using the speech service. Wait a moment and retry."
+        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "I couldn't hear clear speech. Check microphone access and try speaking again."
+        else -> "Speech recognition failed (error $error). Check the device's speech service and microphone privacy settings."
     }
 
     @Deprecated("Legacy activity result API is used to avoid an extra AndroidX dependency.")
@@ -557,7 +1493,80 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val command = raw.trim()
         val lower = command.lowercase(Locale.ROOT)
 
+        if (awaitingIdentityName) {
+            awaitingIdentityName = false
+            handleIdentityName(command)
+            return
+        }
+
+        if (lower == "i am deep dikshit") {
+            handleIdentityName(command)
+            return
+        }
+
+        if (isCreatorQuestion(lower)) {
+            val reply = creatorLoreReply()
+            addMessage("THOR", reply)
+            speak(reply)
+            return
+        }
+
+        if (lower in listOf("aritra", "aritra adhikary")) {
+            handleIdentityName(command)
+            return
+        }
+
         when {
+            lower == "i quit" || lower == "thor i quit" -> {
+                masterVerifiedThisSession = false
+                securityAudit.record("Master Mode sign-out requested")
+                val endingSession = masterApprovalClient.sessionId()
+                masterApprovalClient.clearSessionId()
+                if (endingSession.isNotBlank()) {
+                    mainScope.launch {
+                        try { masterApprovalClient.endSession(endingSession) } catch (_: Exception) {}
+                        FirebaseAuth.getInstance().signOut()
+                    }
+                } else {
+                    FirebaseAuth.getInstance().signOut()
+                }
+                awaitingIdentityName = false
+                val localBoss = bossProfile.bossName().ifBlank { "the local Boss" }
+                val message = "Master Mode sign-out requested on this device. If the approval service is offline, Device A can revoke the server session when it reconnects. General Boss mode restored, $localBoss."
+                addMessage("THOR", message)
+                speak(message)
+            }
+            lower in listOf("revoke master sessions", "manage master sessions") -> {
+                // The Worker independently enforces MASTER_UID and registered-approver
+                // device authorization. Do not trust this client-side flag as a security boundary.
+                showActiveMasterSessions()
+            }
+            lower in listOf("personal memory", "open memory", "memory manager", "show personal memory") -> showPersonalMemoryManager()
+            lower in listOf("security centre", "security center", "open security", "security dashboard") -> showSecurityCentre()
+            lower in listOf("security activity", "show security log") -> showSecurityActivity()
+            lower in listOf("master mode status", "master status") -> {
+                val status = if (masterVerifiedThisSession) "Master Mode is active on this device." else "Master Mode is not active on this device."
+                addMessage("THOR", status)
+                speak(status)
+            }
+            lower in listOf("who am i", "identify me", "what is my identity", "কে আমি", "मैं कौन हूँ") -> {
+                awaitingIdentityName = true
+                val prompt = "Please tell me your name."
+                addMessage("THOR", prompt)
+                speak(prompt)
+            }
+            lower.startsWith("my name is ") || lower.startsWith("i am ") || lower.startsWith("this is ") -> {
+                val identity = when {
+                    lower.startsWith("my name is ") -> command.substring(11).trim()
+                    lower.startsWith("i am ") -> command.substring(5).trim()
+                    else -> command.substring(8).trim()
+                }
+                if (lower.startsWith("i am ") && identity.equals("deep dikshit", ignoreCase = true)) {
+                    handleIdentityName(command)
+                } else {
+                    handleIdentityName(identity)
+                }
+            }
             learningMemory.parseTeaching(command)?.let { learned ->
                 addMessage("THOR", learned)
                 speak(learned)
@@ -566,7 +1575,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             lower in listOf("what have you learned", "show learned memory", "show what you learned", "তুমি কী শিখেছ", "क्या सीखा") -> {
                 val entries = learningMemory.all()
                 addMessage("THOR", if (entries.isEmpty()) "I haven't saved any lessons yet." else
-                    entries.mapIndexed { index, entry -> "${index + 1}. ${entry.first} — ${entry.second}" }.joinToString("\\n"))
+                    entries.mapIndexed { index, entry -> "${index + 1}. ${entry.first} — ${entry.second}" }.joinToString("\n"))
             }
 
             lower.startsWith("forget learning ") -> {
@@ -586,12 +1595,42 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     openAppAndControlMedia(match.groupValues[1].trim(), match.groupValues[2].lowercase(Locale.ROOT))
                 } != null -> Unit
 
-            lower.contains("youtube") && lower.contains("download") &&
-                (lower.contains("5th") || lower.contains("fifth")) && lower.contains("play") ->
-                startYoutubeFifthDownloadNavigation()
+            lower.contains("youtube") && lower.contains("download") && lower.contains("play") -> {
+                val itemNumber = extractOrdinal(lower)
+                if (itemNumber == null) {
+                    val message = "Which downloaded video should I play? For example, say: play the sixth video in YouTube Downloads."
+                    addMessage("THOR", message)
+                    speak(message)
+                } else {
+                    startNavigationTask(
+                        "com.google.android.youtube",
+                        "YOUTUBE_DOWNLOAD_INDEX",
+                        "WAIT_DOWNLOADS",
+                        itemNumber
+                    )
+                }
+            }
+
+            lower.contains("youtube") && lower.contains("download") ->
+                startNavigationTask("com.google.android.youtube", "YOUTUBE_DOWNLOADS", "WAIT_DOWNLOADS", 0)
+
+            lower.contains("instagram") && (lower.contains("reel") || lower.contains("short video")) ->
+                startNavigationTask("com.instagram.android", "INSTAGRAM_REELS", "WAIT_REELS", 0)
+
+            lower in listOf("install offline ai", "load offline ai", "enable offline ai") ->
+                installOfflineAi()
 
             lower in listOf("help", "what can you do", "commands", "मदद", "সাহায্য") ->
                 addMessage("THOR", helpText())
+
+            lower.trim().trimEnd('!', '.', '?', ',') in listOf(
+                "hi", "hello", "hey", "hey thor", "yo", "sup",
+                "হাই", "হ্যালো", "নমস্কার", "नमस्ते", "हेलो"
+            ) -> respond(
+                "Good day. THOR is online. How may I assist you?",
+                "नमस्ते। THOR तैयार है। मैं आपकी क्या सहायता कर सकता हूँ?",
+                "নমস্কার। THOR প্রস্তুত। কীভাবে সাহায্য করতে পারি?"
+            )
 
             lower.startsWith("ask ") || lower.startsWith("chat ") -> {
                 val prompt = command.substringAfter(' ').trim()
@@ -790,15 +1829,103 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
-    /**
-     * Optional wake listening works only while this screen is visible.
-     * THOR does not keep the microphone active in the background.
-     */
+    private fun isBackgroundWakeEnabled(): Boolean =
+        getSharedPreferences("thor_wake", MODE_PRIVATE).getBoolean("background_enabled", false)
+
+    private fun startBackgroundWakeService() {
+        if (!isBackgroundWakeEnabled()) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            getSharedPreferences("thor_wake", MODE_PRIVATE).edit().putBoolean("background_enabled", false).apply()
+            backgroundWakeButton?.text = "BACKGROUND WAKE: OFF"
+            addMessage("THOR", "Background Wake was switched off because microphone permission is no longer available.")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            getSharedPreferences("thor_wake", MODE_PRIVATE).edit().putBoolean("background_enabled", false).apply()
+            backgroundWakeButton?.text = "BACKGROUND WAKE: OFF"
+            addMessage("THOR", "Background Wake needs notification permission so its microphone use remains visible. Enable notifications in Android App info.")
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            getSharedPreferences("thor_wake", MODE_PRIVATE).edit().putBoolean("background_enabled", false).apply()
+            backgroundWakeButton?.text = "BACKGROUND WAKE: OFF"
+            addMessage("THOR", "Background Wake needs an installed Android speech-recognition service. The setting has been switched off.")
+            return
+        }
+        try {
+            val service = Intent(this, ThorBackgroundWakeService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
+            backgroundWakeButton?.text = "BACKGROUND WAKE: ON"
+        } catch (error: Exception) {
+            getSharedPreferences("thor_wake", MODE_PRIVATE).edit().putBoolean("background_enabled", false).apply()
+            backgroundWakeButton?.text = "BACKGROUND WAKE: OFF"
+            addMessage("THOR", "Android could not start Background Wake: ${error.message ?: "service unavailable"}.")
+        }
+    }
+
+    private fun stopBackgroundWakeService() {
+        stopService(Intent(this, ThorBackgroundWakeService::class.java))
+    }
+
+    private fun restartBackgroundWakeServiceIfEnabled() {
+        if (isBackgroundWakeEnabled() && liveSession == null) startBackgroundWakeService()
+    }
+
+    private fun toggleBackgroundWake(button: Button) {
+        if (isBackgroundWakeEnabled()) {
+            getSharedPreferences("thor_wake", MODE_PRIVATE).edit().putBoolean("background_enabled", false).apply()
+            stopBackgroundWakeService()
+            button.text = "BACKGROUND WAKE: OFF"
+            addMessage("THOR", "Background Wake is disabled.")
+            speak("Background Wake is disabled.")
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            addMessage("THOR", "Background Wake needs an installed Android speech-recognition service. Install or enable one, then try again.")
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pendingBackgroundWakeEnable = true
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1007)
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingBackgroundWakeEnable = true
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1008)
+            return
+        }
+        setBackgroundWakeEnabled(true, button)
+    }
+
+    private fun setBackgroundWakeEnabled(enabled: Boolean, button: Button?) {
+        getSharedPreferences("thor_wake", MODE_PRIVATE).edit().putBoolean("background_enabled", enabled).apply()
+        if (enabled) {
+            stopWakeWord()
+            wakeButtons.forEach { it.text = "WAKE: OFF" }
+            startBackgroundWakeService()
+            if (isBackgroundWakeEnabled()) {
+                addMessage("THOR", "Background Wake is active. Keep the ongoing microphone notification visible; Android battery controls may affect availability.")
+                speak("Background Wake is active.")
+            }
+        } else {
+            stopBackgroundWakeService()
+            button?.text = "BACKGROUND WAKE: OFF"
+        }
+    }
+
     private fun toggleWakeWord(button: Button) {
         if (wakeEnabled) {
             stopWakeWord()
             button.text = "WAKE: OFF"
             addMessage("THOR", "Wake listening stopped.")
+            return
+        }
+        if (isBackgroundWakeEnabled()) {
+            addMessage("THOR", "Turn off Background Wake in Settings before enabling in-app Wake Word, so only one microphone listener is active.")
             return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -813,9 +1940,12 @@ lower.startsWith("অ্যালার্ম ") -> {
     }
 
     private fun startWakeWord(button: Button) {
+        try { tapRecognizer?.cancel() } catch (_: Exception) {}
+        tapRecognizer?.destroy()
+        tapRecognizer = null
         wakeEnabled = true
         waitingForWakeCommand = false
-        button.text = "WAKE: ON"
+        wakeButtons.forEach { it.text = "WAKE: ON" }
         addMessage("THOR", "Wake listening is active only while THOR stays open. Say Hey THOR, then your command.")
         if (wakeRecognizer == null) {
             wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer ->
@@ -827,7 +1957,24 @@ lower.startsWith("অ্যালার্ম ") -> {
                     override fun onEndOfSpeech() {}
                     override fun onEvent(eventType: Int, params: Bundle?) {}
                     override fun onPartialResults(partialResults: Bundle?) {}
-                    override fun onError(error: Int) { scheduleWakeListening(900L) }
+                    override fun onError(error: Int) {
+                        android.util.Log.e("THOR_WAKE", "Speech recognition error=$error: ${speechErrorMessage(error)}")
+                        val retryDelay = when (error) {
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> 450L
+                            SpeechRecognizer.ERROR_NO_MATCH -> 550L
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> 1_600L
+                            SpeechRecognizer.ERROR_NETWORK,
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> 2_000L
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                                addMessage("THOR", speechErrorMessage(error))
+                                stopWakeWord()
+                                wakeButton?.text = "WAKE: OFF"
+                                return
+                            }
+                            else -> 1_100L
+                        }
+                        scheduleWakeListening(retryDelay)
+                    }
                     override fun onResults(results: Bundle?) {
                         val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull()?.trim().orEmpty()
@@ -877,7 +2024,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTags.getOrElse(language.selectedItemPosition) { "en-IN" })
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra("android.speech.extra.PREFER_OFFLINE", true)
+                    // Let the installed recognition provider choose network or local processing.
                 }
                 wakeRecognizer?.startListening(intent)
             } catch (error: Exception) {
@@ -892,6 +2039,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         wakeEnabled = false
         waitingForWakeCommand = false
         wakeHandler.removeCallbacksAndMessages(null)
+        wakeButtons.forEach { it.text = "WAKE: OFF" }
         try { wakeRecognizer?.cancel() } catch (_: Exception) {}
         wakeRecognizer?.destroy()
         wakeRecognizer = null
@@ -903,13 +2051,67 @@ lower.startsWith("অ্যালার্ম ") -> {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
+            1001 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoiceInput()
+                else {
+                    addMessage("THOR", "Microphone permission is required for voice input. Enable it in Android App info → Permissions.")
+                    restartBackgroundWakeServiceIfEnabled()
+                }
+            }
             1002 -> {
                 val button = wakeButton ?: return
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     startWakeWord(button)
                 } else {
-                    addMessage("THOR", "Microphone permission is required for wake listening.")
+                    addMessage("THOR", "Microphone permission was denied. Wake listening remains off.")
                 }
+            }
+            1007 -> {
+                val button = backgroundWakeButton
+                pendingBackgroundWakeEnable = false
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1008)
+                    } else {
+                        pendingBackgroundWakeEnable = false
+                        setBackgroundWakeEnabled(true, button)
+                    }
+                } else {
+                    pendingBackgroundWakeEnable = false
+                    getSharedPreferences("thor_wake", MODE_PRIVATE).edit()
+                        .putBoolean("background_enabled", false).apply()
+                    button?.text = "BACKGROUND WAKE: OFF"
+                    addMessage("THOR", "Microphone permission was denied. Background Wake remains off.")
+                }
+            }
+            1008 -> {
+                val button = backgroundWakeButton
+                if (pendingBackgroundWakeEnable &&
+                    grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingBackgroundWakeEnable = false
+                    setBackgroundWakeEnabled(true, button)
+                } else {
+                    pendingBackgroundWakeEnable = false
+                    getSharedPreferences("thor_wake", MODE_PRIVATE).edit()
+                        .putBoolean("background_enabled", false).apply()
+                    button?.text = "BACKGROUND WAKE: OFF"
+                    addMessage("THOR", "Notification permission is required to keep Background Wake visibly active. Enable notifications in Android App info, then try again.")
+                }
+            }
+            1003 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                    ThorReminderReceiver.restorePending(this)
+                    addMessage("THOR", "Notifications are enabled. Any due THOR reminders have been restored.")
+                } else {
+                    addMessage("THOR", "Reminder alarms are saved, but Android notification permission is off. Enable it in app settings to receive reminder alerts.")
+                }
+            }
+            1006 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startThorLive()
+                else Toast.makeText(this, "Microphone permission is required for THOR Live.", Toast.LENGTH_LONG).show()
             }
             1004 -> {
                 if (pendingBossVoiceEnrollment) {
@@ -942,35 +2144,303 @@ lower.startsWith("অ্যালার্ম ") -> {
             }
             Firebase.appCheck.installAppCheckProviderFactory(providerFactory)
             firebaseReady = true
+            firebaseInitError = null
         } catch (error: Exception) {
             firebaseReady = false
-            addMessage("THOR", "Firebase setup needs attention: ${error.message ?: "initialization failed"}")
+            firebaseInitError = error.localizedMessage ?: error.javaClass.simpleName
+            addMessage("THOR", "Firebase setup needs attention: ${firebaseInitError}")
         }
     }
 
-    private fun askGemini(prompt: String) {
+    private fun showAiProviderSettings(providerButton: Button) {
+        val manager = ThorAiProviderManager(this)
+        val current = manager.settings()
+        val providers = ThorAiProviderManager.Provider.values()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24, 8, 24, 4)
+        }
+        val providerSpinner = Spinner(this)
+        providerSpinner.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            providers.map { it.title }
+        )
+        providerSpinner.setSelection(providers.indexOf(current.provider).coerceAtLeast(0))
+        fun field(label: String, value: String, hint: String, password: Boolean = false): EditText {
+            panel.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(Color.rgb(45, 190, 255))
+                setPadding(0, 10, 0, 3)
+            })
+            return EditText(this).apply {
+                setSingleLine(true)
+                setText(value)
+                this.hint = hint
+                if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }.also { panel.addView(it, matchWrap()) }
+        }
+        panel.addView(TextView(this).apply { text = "AI provider"; textSize = 13f })
+        panel.addView(providerSpinner, matchWrap())
+        val modelField = field("Model name", current.model, "Enter provider model ID")
+        val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions URL")
+        val keyField = field(
+            "API key",
+            "",
+            if (current.apiKey.isNotBlank()) "Key saved encrypted; blank keeps it" else "Paste your own key",
+            true
+        )
+        val help = TextView(this).apply {
+            text = "THOR Live Mode uses the secured Cloudflare Worker and a short-lived Gemini session token. It does not expose a permanent Gemini API key in the app. Configure the Worker once under Remote Master Mode. OpenAI uses your own API key; API billing is separate from ChatGPT subscriptions. Groq and OpenRouter use standard endpoints. Cloudflare/custom need a full HTTPS chat-completions endpoint. Provider quotas and charges still apply."
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 10, 0, 4)
+        }
+        panel.addView(help, matchWrap())
+        var previousProvider = current.provider
+        providerSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                val selected = providers[position]
+                if (selected != previousProvider) {
+                    val saved = manager.settings(selected)
+                    modelField.setText(saved.model)
+                    endpointField.setText(saved.endpoint)
+                    keyField.hint = if (saved.apiKey.isNotBlank()) "API key saved securely; blank keeps it" else "Paste your API key"
+                    previousProvider = selected
+                }
+                val needsKey = selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+                keyField.isEnabled = needsKey
+                endpointField.isEnabled = selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+                modelField.isEnabled = selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("THOR AI PROVIDER")
+            .setView(panel)
+            .setPositiveButton("SAVE") { _, _ ->
+                val selected = providers[providerSpinner.selectedItemPosition]
+                manager.save(
+                    selected,
+                    modelField.text.toString(),
+                    endpointField.text.toString(),
+                    keyField.text.toString()
+                )
+                providerButton.text = "AI PROVIDER: " + selected.title
+                Toast.makeText(this, "AI provider saved. Checking the connection...", Toast.LENGTH_LONG).show()
+                if (selected != ThorAiProviderManager.Provider.GEMINI &&
+                    selected != ThorAiProviderManager.Provider.LOCAL
+                ) {
+                    // Verify the saved endpoint and credential immediately with a tiny request.
+                    // This avoids reporting "saved" as if the API key were already proven valid.
+                    mainScope.launch {
+                        try {
+                            val reply = withContext(Dispatchers.IO) {
+                                manager.ask("Reply with exactly: OK", 64)
+                            }
+                            if (!isFinishing && !isDestroyed) {
+                                addMessage("THOR", "${selected.title} connection verified. API key and model are responding.")
+                                Toast.makeText(this@MainActivity, "API connection verified successfully.", Toast.LENGTH_LONG).show()
+                            }
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            if (!isFinishing && !isDestroyed) {
+                                val detail = (error.message ?: error.javaClass.simpleName).take(220)
+                                addMessage("THOR", "${selected.title} connection test failed: $detail")
+                                Toast.makeText(this@MainActivity, "API test failed: $detail", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+            }
+            .setNeutralButton("REMOVE SAVED KEY") { _, _ ->
+                val selected = providers[providerSpinner.selectedItemPosition]
+                manager.clearKey(selected)
+                Toast.makeText(this, "Saved API key removed from this device.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show()
+    }
+
+    private fun explainGeminiFailure(error: Throwable): String {
+        val details = generateSequence(error) { it.cause }
+            .mapNotNull { it.localizedMessage?.takeIf(String::isNotBlank) }
+            .distinct()
+            .joinToString(" | ")
+            .take(900)
+        val lower = details.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("app check") || lower.contains("appcheck") ||
+                lower.contains("permission_denied") || lower.contains("403") ->
+                "Gemini was blocked by Firebase App Check. This debug APK needs its device debug token registered in Firebase Console → App Check → Apps → THOR → Manage debug tokens. Run THOR and check Android Logcat for 'DebugAppCheckProvider' to find the token; keep it private and never post it publicly. Details: $details"
+            lower.contains("quota") || lower.contains("resource exhausted") || lower.contains("429") ->
+                "Gemini quota/rate limit reached. THOR will use offline mode for now. Details: $details"
+            lower.contains("api key") || lower.contains("unauthenticated") || lower.contains("401") ->
+                "Gemini authentication was rejected. Check the Firebase project/app configuration and enabled Firebase AI Logic service. Details: $details"
+            else -> "Gemini request failed. Check internet, Firebase AI Logic, and App Check. THOR will use offline mode. Details: ${details.ifBlank { error.javaClass.simpleName }}"
+        }
+    }
+
+    private fun checkGeminiConnection(button: Button) {
+        val manager = ThorAiProviderManager(this)
+        val selected = manager.settings().provider
+        if (selected == ThorAiProviderManager.Provider.LOCAL) {
+            addMessage("THOR", "On-device AI is selected. Choose an online provider to test a network connection.")
+            return
+        }
+        button.isEnabled = false
+        button.text = "TESTING ONLINE AI..."
+        if (selected != ThorAiProviderManager.Provider.GEMINI) {
+            addMessage("THOR", "Testing the selected online provider with a small live request. Your API key stays encrypted on this device.")
+            mainScope.launch {
+                try {
+                    val reply = manager.ask("Reply with exactly: THOR connection verified.", 64)
+                    addMessage("THOR", "${selected.title} connection verified. The API key, endpoint, and model returned a response: ${reply.take(90)}")
+                    Toast.makeText(this@MainActivity, "Online AI connection verified.", Toast.LENGTH_LONG).show()
+                } catch (error: Exception) {
+                    android.util.Log.e("THOR_AI_PROVIDER", "Manual online provider test failed", error)
+                    addMessage("THOR", "${selected.title} test failed: ${error.message ?: error.javaClass.simpleName}")
+                } finally {
+                    if (!isFinishing && !isDestroyed) {
+                        button.isEnabled = true
+                        button.text = "TEST ONLINE AI CONNECTION"
+                    }
+                }
+            }
+            return
+        }
         if (!firebaseReady) {
+            addMessage("THOR", "Firebase is not initialized. Check the Firebase app configuration first.")
+            button.isEnabled = true
+            button.text = "TEST ONLINE AI CONNECTION"
+            return
+        }
+        addMessage("THOR", "Checking Firebase App Check and sending a small Gemini test request...")
+        Firebase.appCheck.getAppCheckToken(false)
+            .addOnSuccessListener {
+                mainScope.launch {
+                    try {
+                        val reply = GeminiAssistant.ask("Reply with exactly: THOR connection verified.")
+                        addMessage("THOR", "Firebase Gemini connection verified. App Check token was obtained and the model replied: ${reply.take(100)}")
+                        Toast.makeText(this@MainActivity, "Gemini connection verified.", Toast.LENGTH_LONG).show()
+                    } catch (error: Exception) {
+                        android.util.Log.e("THOR_GEMINI", "Manual Gemini connection test failed", error)
+                        addMessage("THOR", explainGeminiFailure(error))
+                    } finally {
+                        if (!isFinishing && !isDestroyed) {
+                            button.isEnabled = true
+                            button.text = "TEST ONLINE AI CONNECTION"
+                        }
+                    }
+                }
+            }
+            .addOnFailureListener { error ->
+                android.util.Log.e("THOR_APPCHECK", "App Check token request failed", error)
+                addMessage("THOR", "Firebase App Check could not issue a token: ${error.localizedMessage ?: error.javaClass.simpleName}. Check App Check provider setup for this build.")
+                button.isEnabled = true
+                button.text = "TEST ONLINE AI CONNECTION"
+            }
+    }
+    private fun askGemini(prompt: String) {
+        val providerManager = ThorAiProviderManager(this)
+        val selectedProvider = providerManager.settings().provider
+        if (selectedProvider == ThorAiProviderManager.Provider.LOCAL) {
+            addMessage("THOR", "Local AI selected. No online request will be made.")
             askLocalOrFallback(prompt)
             return
         }
+        if (selectedProvider != ThorAiProviderManager.Provider.GEMINI) {
+            val languageInstruction = when (language.selectedItemPosition) {
+                1 -> "Reply in natural Hindi."
+                2 -> "Reply in natural Bengali."
+                else -> "Reply in clear English."
+            }
+            val compactPrompt = prompt.trim().take(2000)
+            val styleInstruction = "You are THOR, a quick, natural, friendly Android assistant. Answer the actual question first. Keep simple replies to 1–3 sentences and expand only when useful. Sound conversational, not robotic; avoid filler, repeated greetings, and unnecessary headings. Match the user's language and tone. In playful THOR lore, Aritra Adhikary and Deep Dikshit are its creators; address Aritra as Lord Aritra and Deep as Master Deep whenever referring to him or greeting him. Encourage them honestly, but never praise harmful or unsafe actions. Be accurate and admit uncertainty."
+            val memoryContext = learningMemory.systemContext().take(1200)
+            addMessage("THOR", "Connecting to ${selectedProvider.title}...")
+            mainScope.launch {
+                try {
+                    val answer = providerManager.ask("$masterDeepIdentityMemory\n$styleInstruction\n$languageInstruction\n$memoryContext\nUser: $compactPrompt")
+                    addMessage("THOR", answer)
+                    speak(answer)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    val detail = error.message ?: error.javaClass.simpleName
+                    android.util.Log.e("THOR_AI_PROVIDER", "Selected provider failed", error)
+                    addMessage("THOR", "${selectedProvider.title} request failed: ${detail.take(220)}. Switching to local AI as a backup.")
+                    askLocalOrFallback(prompt)
+                }
+            }
+            return
+        }
+        if (!firebaseReady) {
+            addMessage("THOR", "Firebase AI is not initialized: ${firebaseInitError ?: "unknown Firebase setup error"}. Check Firebase configuration and App Check, then use Settings → Check Gemini Connection.")
+            askLocalOrFallback(prompt)
+            return
+        }
+
+        val prefs = getSharedPreferences("thor_data_saver", MODE_PRIVATE)
+        val quotaBlockedUntil = prefs.getLong("gemini_quota_blocked_until", 0L)
+        if (System.currentTimeMillis() < quotaBlockedUntil) {
+            val minutes = ((quotaBlockedUntil - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
+            addMessage("THOR", "Gemini quota cooldown is active for about $minutes more minutes. Using offline AI to save requests.")
+            askLocalOrFallback(prompt)
+            return
+        }
+
+        val compactPrompt = prompt.trim().take(2000)
         val languageInstruction = when (language.selectedItemPosition) {
             1 -> "Reply in natural Hindi."
             2 -> "Reply in natural Bengali."
             else -> "Reply in clear English."
         }
-        val styleInstruction = "Automatically match the user's language and level of informality in every reply. If the user writes in casual English, internet slang, Bengali colloquial language, or Bengali-English mix, reply naturally in that same casual register and language. Understand common everyday slang and informal spellings; do not lecture the user about slang or unnecessarily correct it. Use slang naturally rather than forcing it into every sentence. Keep replies clear and avoid hateful slurs or targeted harassment."
-        android.util.Log.i("THOR_GEMINI", "Gemini request started")
-        addMessage("THOR", "Thinking... (up to 60 seconds)")
+        val styleInstruction = "You are THOR, a quick, natural, friendly Android assistant. Answer the actual question first. Keep simple replies to 1–3 sentences and expand only when useful. Sound conversational, not robotic; avoid filler, repeated greetings, and unnecessary headings. Match the user's language and tone. In playful THOR lore, Aritra Adhikary and Deep Dikshit are its creators; address them as Lord Aritra or Lord Deep when they identify themselves. Encourage them honestly, but never praise harmful or unsafe actions. Be accurate and admit uncertainty."
+        android.util.Log.i("THOR_GEMINI", "Gemini request started (data-saver mode)")
         mainScope.launch {
             try {
-                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n${learningMemory.systemContext()}\nUser: $prompt")
-                android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
-                addMessage("THOR", answer)
+                val memoryContext = learningMemory.systemContext().take(1200)
+                runOnUiThread { chat.append("THOR  ›  ") }
+                val answer = GeminiAssistant.askStreaming(
+                    "$masterDeepIdentityMemory\n$languageInstruction\n$styleInstruction\n$memoryContext\nUser: $compactPrompt"
+                ) { chunk ->
+                    runOnUiThread { chat.append(chunk) }
+                }
+                runOnUiThread { chat.append("\n\n") }
+                prefs.edit().remove("gemini_quota_blocked_until").apply()
+                android.util.Log.i("THOR_GEMINI", "Gemini streaming request succeeded")
                 speak(answer)
+            } catch (error: TimeoutCancellationException) {
+                runOnUiThread { chat.append("\n\n") }
+                android.util.Log.w("THOR_GEMINI", "Gemini timed out; switching to on-device AI", error)
+                addMessage("THOR", "Online AI is taking too long. I'll continue offline.")
+                askLocalOrFallback(prompt)
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
+                runOnUiThread { chat.append("\n\n") }
                 android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
                 val detail = error.message ?: error.javaClass.simpleName
-                addMessage("THOR", "Online AI unavailable ($detail). Switching to the on-device AI.")
+                val quotaError = detail.contains("quota", ignoreCase = true) ||
+                    detail.contains("resource exhausted", ignoreCase = true) ||
+                    detail.contains("429", ignoreCase = true)
+                if (quotaError) {
+                    // One-hour cooldown avoids repeated requests after a free-tier quota error.
+                    prefs.edit().putLong(
+                        "gemini_quota_blocked_until",
+                        System.currentTimeMillis() + 60L * 60L * 1000L
+                    ).apply()
+                    addMessage("THOR", "Gemini's free quota is exhausted. I'll use offline AI and won't retry online for one hour.")
+                } else {
+                    addMessage("THOR", explainGeminiFailure(error))
+                }
                 askLocalOrFallback(prompt)
             }
         }
@@ -1018,7 +2488,24 @@ lower.startsWith("অ্যালার্ম ") -> {
         return reply
     }
 
-    private fun startYoutubeFifthDownloadNavigation() {
+    private fun extractOrdinal(command: String): Int? {
+        val words = mapOf(
+            "first" to 1, "second" to 2, "third" to 3, "fourth" to 4,
+            "fifth" to 5, "sixth" to 6, "seventh" to 7, "eighth" to 8,
+            "ninth" to 9, "tenth" to 10
+        )
+        words.entries.firstOrNull { Regex("\\b${it.key}\\b").containsMatchIn(command) }?.let { return it.value }
+        val numeric = Regex("\\b(\\d{1,2})(?:st|nd|rd|th)?\\b").find(command)
+            ?.groupValues?.getOrNull(1)?.toIntOrNull()
+        return numeric?.takeIf { it in 1..20 }
+    }
+
+    private fun startNavigationTask(
+        appPackage: String,
+        task: String,
+        stage: String,
+        itemNumber: Int
+    ) {
         val serviceName = android.content.ComponentName(this, ThorNavigationService::class.java).flattenToString()
         val enabledServices = Settings.Secure.getString(
             contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -1026,37 +2513,44 @@ lower.startsWith("অ্যালার্ম ") -> {
         val serviceEnabled = enabledServices.split(':').any { it.equals(serviceName, ignoreCase = true) }
 
         if (!serviceEnabled) {
-            val message = "Screen Navigation needs your permission first. Enable THOR Navigation in Android Accessibility settings, then repeat the command."
+            val message = "Screen Navigation needs your permission. Enable THOR Navigation in Android Accessibility settings, then repeat your command."
             addMessage("THOR", message)
             speak(message)
-            try {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            } catch (_: Exception) {
-                addMessage("THOR", "Open Settings > Accessibility > THOR Navigation manually.")
-            }
+            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            catch (_: Exception) { addMessage("THOR", "Open Settings > Accessibility > THOR Navigation manually.") }
             return
         }
 
-        val launch = packageManager.getLaunchIntentForPackage("com.google.android.youtube")
+        val launch = packageManager.getLaunchIntentForPackage(appPackage)
         if (launch == null) {
-            val message = "YouTube is not installed or cannot be opened on this phone."
+            val appName = if (appPackage == "com.instagram.android") "Instagram" else "YouTube"
+            val message = "$appName is not installed or cannot be opened on this phone."
             addMessage("THOR", message)
             speak(message)
             return
         }
 
         getSharedPreferences("thor_navigation", MODE_PRIVATE).edit()
-            .putString("task", "YOUTUBE_FIFTH_DOWNLOAD")
-            .putString("stage", "WAIT_DOWNLOADS")
+            .putString("task", task)
+            .putString("stage", stage)
+            .putInt("item_number", itemNumber)
+            .putLong("created_at", System.currentTimeMillis())
             .putString("seen_items", "")
             .apply()
-        addMessage("THOR", "Opening YouTube. I'll look for Downloads and select the fifth listed video. You can stop the task by turning off THOR Navigation in Accessibility settings.")
-        speak("Opening YouTube. Navigating to Downloads.")
+
+        val description = when (task) {
+            "YOUTUBE_DOWNLOAD_INDEX" -> "Opening YouTube Downloads and looking for video number $itemNumber."
+            "YOUTUBE_DOWNLOADS" -> "Opening YouTube and navigating to Downloads."
+            "INSTAGRAM_REELS" -> "Opening Instagram and navigating to Reels."
+            else -> "Opening the requested app."
+        }
+        addMessage("THOR", "$description Screen navigation is best-effort and depends on the app's current layout.")
+        speak(description)
         try {
             startActivity(launch)
         } catch (error: Exception) {
             getSharedPreferences("thor_navigation", MODE_PRIVATE).edit().clear().apply()
-            addMessage("THOR", "I couldn't open YouTube: ${error.message ?: "launch failed"}")
+            addMessage("THOR", "I couldn't open the app: ${error.message ?: "launch failed"}")
         }
     }
 
@@ -1139,51 +2633,133 @@ private fun launchIntent(
 
 
     private fun scheduleReminder(command: String) {
-        val relative = Regex("""(?i)in\s+(\d+)\s+(minute|minutes|min|hour|hours|hr)""").find(command)
-        val timeMatch = Regex("""(\d{1,2})[:.](\d{2})""").find(command)
-        val message = when {
-            relative != null -> command.substring(relative.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
-            timeMatch != null -> command.substring(timeMatch.range.last + 1).trim().trimStart('-', ':').ifBlank { "THOR reminder" }
-            else -> ""
+        val request = try {
+            ReminderCommandParser.parse(command)
+        } catch (error: IllegalArgumentException) {
+            addMessage("THOR", error.message ?: "I couldn't understand that reminder.")
+            return
         }
-        val triggerAt = when {
-            relative != null -> {
-                val amount = relative.groupValues[1].toLongOrNull() ?: 0L
-                val unit = relative.groupValues[2].lowercase(Locale.ROOT)
-                if (amount <= 0L || amount > 10080L) {
-                    addMessage("THOR", "Choose a reminder between 1 minute and 7 days from now.")
-                    return
-                }
-                System.currentTimeMillis() + amount * if (unit.startsWith("hour") || unit == "hr") 3_600_000L else 60_000L
+        val triggerAt = request.relativeDelayMillis?.let { System.currentTimeMillis() + it } ?: run {
+            val calendar = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, request.hour!!)
+                set(Calendar.MINUTE, request.minute!!)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
             }
-            timeMatch != null -> {
-                val hour = timeMatch.groupValues[1].toIntOrNull()
-                val minute = timeMatch.groupValues[2].toIntOrNull()
-                if (hour == null || minute == null || hour !in 0..23 || minute !in 0..59) {
-                    addMessage("THOR", "That time is invalid. Use 24-hour time, like 07:30.")
-                    return
-                }
-                val calendar = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, hour)
-                    set(Calendar.MINUTE, minute)
-                    set(Calendar.SECOND, 0)
-                    set(Calendar.MILLISECOND, 0)
-                    if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
-                }
-                calendar.timeInMillis
-            }
-            else -> {
-                addMessage("THOR", "Use: remind 07:30 Take my book, or remind in 10 minutes Take a break.")
-                return
-            }
+            calendar.timeInMillis
         }
-        val reminderText = message.ifBlank { "THOR reminder" }
+        val reminderText = request.message.ifBlank { "THOR reminder" }
         ThorReminderReceiver.schedule(this, triggerAt, reminderText)
         val whenText = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(triggerAt))
         addMessage("THOR", "Reminder scheduled for $whenText: $reminderText. Android may delay it in battery-saving modes.")
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+        if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1003)
+    }
+
+    private fun showPersonalMemoryManager() {
+        val entries = learningMemory.all()
+        securityAudit.record("Personal memory manager opened")
+        if (entries.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Personal Memory")
+                .setMessage("No personal lessons are saved yet. Teach THOR with: teach me that 'no cap' means 'I'm being serious'.\n\nSaved lessons stay in this app's private local storage.")
+                .setPositiveButton("CLOSE", null)
+                .show()
+            return
+        }
+        val labels = entries.map { "${it.first} — ${it.second}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Personal Memory • ${entries.size} saved")
+            .setItems(labels) { _, which ->
+                val topic = entries[which].first
+                AlertDialog.Builder(this)
+                    .setTitle("Forget “$topic”?")
+                    .setMessage("This removes the selected saved lesson from this device.")
+                    .setPositiveButton("FORGET") { _, _ ->
+                        if (learningMemory.forget(topic)) {
+                            securityAudit.record("One personal memory item deleted")
+                            addMessage("THOR", "I removed that saved memory.")
+                        }
+                    }
+                    .setNegativeButton("CANCEL", null)
+                    .show()
+            }
+            .setNeutralButton("CLEAR ALL") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle("Clear all personal memory?")
+                    .setMessage("All user-taught lessons will be removed from this device. Notes and tasks are not affected.")
+                    .setPositiveButton("CLEAR") { _, _ ->
+                        learningMemory.clear()
+                        securityAudit.record("All personal memory items cleared")
+                        addMessage("THOR", "All personal memory lessons have been cleared.")
+                    }
+                    .setNegativeButton("CANCEL", null)
+                    .show()
+            }
+            .setNegativeButton("CLOSE", null)
+            .show()
+    }
+
+    private fun showSecurityCentre() {
+        val audio = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val notifications = Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val approvalKey = try { ThorDeviceApproval(this).hasKey() } catch (_: Exception) { false }
+        val session = masterApprovalClient.sessionId()
+        val sessionLabel = if (session.isBlank()) "No saved session" else "Session ID stored (••••${session.takeLast(4)})"
+        val workerLabel = if (masterApprovalClient.baseUrl.isBlank()) "Not configured" else "HTTPS endpoint configured"
+        val report = listOf(
+            "Remote approval service: $workerLabel",
+            "Device A approval key: ${if (approvalKey) "present in Android Keystore" else "not present on this device"}",
+            "Microphone permission: ${if (audio) "granted" else "not granted"}",
+            "Notifications: ${if (notifications) "allowed or not required" else "not allowed"}",
+            "Memory storage: app-private local preferences (not end-to-end encrypted)",
+            "Security activity: stored locally on this device"
+        ).joinToString("\n\n")
+        securityAudit.record("Privacy and Security Centre opened")
+        val options = arrayOf(
+            "View security activity",
+            "Open Android app permissions",
+            "Close"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("THOR • Privacy & Security")
+            .setMessage(report)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showSecurityActivity()
+                    1 -> {
+                        securityAudit.record("Android app permission settings opened")
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                        launchIntent(intent, "Opening Android's THOR permission settings.")
+                    }
+                }
+            }
+            .setPositiveButton("DONE", null)
+            .show()
+    }
+
+    private fun showSecurityActivity() {
+        val events = securityAudit.events()
+        val message = if (events.isEmpty()) "No security events have been recorded yet."
+            else events.joinToString("\n\n") { "${it.first} • ${it.second}" }
+        AlertDialog.Builder(this)
+            .setTitle("Security Activity")
+            .setMessage(message)
+            .setNeutralButton("CLEAR LOG") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setMessage("Clear the local security activity history?")
+                    .setPositiveButton("CLEAR") { _, _ ->
+                        securityAudit.clear()
+                        addMessage("THOR", "Local security activity history cleared.")
+                    }
+                    .setNegativeButton("CANCEL", null)
+                    .show()
+            }
+            .setPositiveButton("CLOSE", null)
+            .show()
     }
 
     private fun helpText(): String =
@@ -1194,6 +2770,7 @@ private fun launchIntent(
         "• sms 9876543210 (opens SMS app)\n" +
         "• remind 07:30 Take my book / remind in 10 minutes Stretch\n" +
         "• hey THOR (visible wake listening while THOR is open)\n" +
+        "• Enable BACKGROUND WAKE in Settings for listening while THOR is in the background; tap its notification to run a heard command\n" +
         "• pause music / next song / previous song / volume up\n" +
         "• wifi settings / bluetooth settings\n" +
         "• what time is it\n" +
@@ -1201,7 +2778,7 @@ private fun launchIntent(
         "• teach me that no cap means I am serious\n" +
         "• what have you learned / forget learning X / clear learned memory\n" +
         "• install offline AI for open-ended offline chat\n\n" +
-        "The offline language model is downloaded separately on demand (~586 MB), not bundled into each APK. Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
+        "The offline language model is bundled into this APK build (~586 MB). Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
         val answer = when (language.selectedItemPosition) {
@@ -1217,28 +2794,87 @@ private fun launchIntent(
         chat.append("$who  ›  $message\n\n")
     }
 
+    private var pendingSpeech: String? = null
+
     private fun speak(message: String) {
-        if (ttsReady) {
-            setTtsLanguage()
-            applyVoiceStyle()
-            tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "thor-${System.currentTimeMillis()}")
+        val engine = tts
+        if (engine == null || !ttsReady) {
+            pendingSpeech = message
+            return
         }
+        setTtsLanguage()
+        applyVoiceStyle()
+        val result = engine.speak(message, TextToSpeech.QUEUE_FLUSH, null, "thor-${System.currentTimeMillis()}")
+        if (result == TextToSpeech.ERROR) {
+            android.util.Log.e("THOR_TTS", "TTS engine rejected speech")
+            Toast.makeText(this, "THOR voice failed. Check the installed text-to-speech engine and media volume.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Hybrid voice policy:
+     * - With a validated internet connection, prefer a language-matched network voice.
+     * - Offline, prefer a language-matched voice that does not require the network.
+     * - If the preferred class is unavailable, fall back to any installed voice for the language,
+     *   then Android's language/default voice.
+     */
+    private fun hasValidatedInternet(): Boolean {
+        val connectivity = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        val network = connectivity.activeNetwork ?: return false
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun applyVoiceStyle() {
         val engine = tts ?: return
-        when (voiceStyle.selectedItemPosition) {
-            0 -> { engine.setPitch(0.82f); engine.setSpeechRate(0.90f) }
-            1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
-            else -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
+        val wantedLocale = when (language.selectedItemPosition) {
+            1 -> Locale("hi", "IN")
+            2 -> Locale("bn", "IN")
+            else -> if (voiceStyle.selectedItemPosition == 3) Locale.UK else Locale("en", "IN")
         }
-    }
+        val available = engine.voices.orEmpty().filter {
+            it.locale.language.equals(wantedLocale.language, ignoreCase = true)
+        }
+        // Prefer a higher-quality network voice when internet is validated; fall back
+        // to an installed offline voice, then any installed voice for this language.
+        val preferNetwork = hasValidatedInternet()
+        val preferred = if (preferNetwork) {
+            available.filter { it.isNetworkConnectionRequired }.maxByOrNull { it.quality }
+                ?: available.filter { !it.isNetworkConnectionRequired }.maxByOrNull { it.quality }
+        } else {
+            available.filter { !it.isNetworkConnectionRequired }.maxByOrNull { it.quality }
+                ?: available.filter { it.isNetworkConnectionRequired }.maxByOrNull { it.quality }
+        }
+        val selected = preferred ?: available.maxByOrNull { it.quality }
+        if (selected != null) {
+            try {
+                engine.voice = selected
+                val mode = if (selected.isNetworkConnectionRequired) "ONLINE" else "OFFLINE"
+                val languageName = when (selected.locale.language) {
+                    "hi" -> "Hindi"
+                    "bn" -> "Bengali"
+                    else -> "English"
+                }
+                voiceStatus?.text = "Hybrid voice: $mode • $languageName • ${selected.name}" +
+                    if (preferred == null) " (using installed fallback voice)" else ""
+            } catch (error: Exception) {
+                voiceStatus?.text = "Hybrid voice: Android default voice • ${error.message ?: "voice selection unavailable"}"
+            }
+        } else {
+            voiceStatus?.text = "No installed voice is available for this language. Install voice data in Android Text-to-Speech settings."
+        }
 
-    override fun onInit(status: Int) {
-        ttsReady = status == TextToSpeech.SUCCESS
-        if (ttsReady) {
-            setTtsLanguage()
-            applyVoiceStyle()
+        when (voiceStyle.selectedItemPosition) {
+            // Lower pitch and slightly slower delivery create a deeper, cinematic
+            // narrator effect while retaining intelligibility across Hindi and English.
+            0 -> { engine.setPitch(0.76f); engine.setSpeechRate(0.88f) }
+            1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
+            2 -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
+            3 -> {
+                engine.setPitch(0.90f)
+                engine.setSpeechRate(0.92f)
+            }
         }
     }
 
@@ -1246,32 +2882,73 @@ private fun launchIntent(
         val locale = when (language.selectedItemPosition) {
             1 -> Locale("hi", "IN")
             2 -> Locale("bn", "IN")
-            else -> Locale("en", "IN")
+            else -> if (voiceStyle.selectedItemPosition == 3) Locale.UK else Locale("en", "IN")
         }
         val result = tts?.isLanguageAvailable(locale) ?: TextToSpeech.LANG_NOT_SUPPORTED
         if (result >= TextToSpeech.LANG_AVAILABLE) {
             tts?.language = locale
         } else {
-            tts?.language = Locale.ENGLISH
-            Toast.makeText(this, "That voice is not installed. Using English.", Toast.LENGTH_LONG).show()
+            val languageOnly = Locale(locale.language)
+            val languageResult = tts?.isLanguageAvailable(languageOnly) ?: TextToSpeech.LANG_NOT_SUPPORTED
+            if (languageResult >= TextToSpeech.LANG_AVAILABLE) {
+                tts?.language = languageOnly
+                voiceStatus?.text = "Hybrid voice: using the installed ${locale.displayLanguage} voice without a regional variant."
+            } else {
+                tts?.language = Locale.ENGLISH
+                voiceStatus?.text = "Hybrid voice: ${locale.displayLanguage} voice data is unavailable. Install it in Android TTS settings."
+            }
+        }
+    }
+
+    override fun onInit(status: Int) {
+        ttsReady = status == TextToSpeech.SUCCESS
+        if (ttsReady) {
+            tts?.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            setTtsLanguage()
+            applyVoiceStyle()
+            pendingSpeech?.let { queued ->
+                pendingSpeech = null
+                speak(queued)
+            }
+        } else {
+            android.util.Log.e("THOR_TTS", "TextToSpeech initialization failed: $status")
+            runOnUiThread {
+                Toast.makeText(this, "THOR voice engine could not start. Check Android Text-to-speech settings.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
     override fun onPause() {
+        if (liveSession != null) stopThorLive(resumeBackgroundWake = false)
+        try { tapRecognizer?.cancel() } catch (_: Exception) {}
+        tapRecognizer?.destroy()
+        tapRecognizer = null
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
         super.onPause()
     }
 
+    override fun onResume() {
+        super.onResume()
+    }
+
     override fun onDestroy() {
+        stopThorLive(resumeBackgroundWake = false)
         stopWakeWord()
         try { bossRecorder?.stop() } catch (_: Exception) {}
         bossRecorder?.release()
         bossRecorder = null
         tts?.stop()
         tts?.shutdown()
-        offlineAi.close()
         mainScope.cancel()
+        repeatingUiAnimators.forEach { it.cancel() }
+        repeatingUiAnimators.clear()
+        offlineAi.close()
         super.onDestroy()
     }
 }

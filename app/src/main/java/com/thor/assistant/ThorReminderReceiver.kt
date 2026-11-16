@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -16,12 +17,11 @@ import org.json.JSONObject
 class ThorReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED -> restore(context)
+            Intent.ACTION_BOOT_COMPLETED -> restorePending(context)
             ACTION_REMIND -> {
                 val id = intent.getLongExtra(EXTRA_ID, 0L)
                 val message = intent.getStringExtra(EXTRA_TEXT) ?: "THOR reminder"
-                showNotification(context, id, message)
-                removeSaved(context, id)
+                if (showNotification(context, id, message)) removeSaved(context, id)
             }
         }
     }
@@ -56,7 +56,11 @@ class ThorReminderReceiver : BroadcastReceiver() {
             return id
         }
 
-        private fun restore(context: Context) {
+        /**
+         * Re-arms future reminders after reboot and retries due notifications that
+         * could not be displayed because Android notification permission was denied.
+         */
+        fun restorePending(context: Context) {
             val items = readItems(context)
             val now = System.currentTimeMillis()
             for (i in 0 until items.length()) {
@@ -65,7 +69,7 @@ class ThorReminderReceiver : BroadcastReceiver() {
                 val at = item.optLong("at")
                 val message = item.optString("text", "THOR reminder")
                 if (at <= now) {
-                    showNotification(context, id, message)
+                    if (showNotification(context, id, message)) removeSaved(context, id)
                 } else {
                     val alarmIntent = Intent(context, ThorReminderReceiver::class.java).apply {
                         action = ACTION_REMIND
@@ -99,17 +103,21 @@ class ThorReminderReceiver : BroadcastReceiver() {
                 .edit().putString(KEY_ITEMS, next.toString()).apply()
         }
 
-        private fun showNotification(context: Context, id: Long, message: String) {
+        private fun showNotification(context: Context, id: Long, message: String): Boolean {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= 26) {
                 manager.createNotificationChannel(
                     NotificationChannel(CHANNEL, "THOR reminders", NotificationManager.IMPORTANCE_HIGH)
                 )
             }
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return false
+            if (Build.VERSION.SDK_INT >= 26 &&
+                manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE
+            ) return false
             if (Build.VERSION.SDK_INT >= 33 &&
                 context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) return
+            ) return false
 
             val openApp = PendingIntent.getActivity(
                 context, id.hashCode(),
@@ -128,7 +136,12 @@ class ThorReminderReceiver : BroadcastReceiver() {
                 .setContentIntent(openApp)
                 .setAutoCancel(true)
                 .build()
-            manager.notify(id.hashCode(), notification)
+            return try {
+                manager.notify(id.hashCode(), notification)
+                true
+            } catch (_: SecurityException) {
+                false
+            }
         }
     }
 }

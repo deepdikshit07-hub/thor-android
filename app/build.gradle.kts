@@ -10,31 +10,16 @@ kotlin {
     }
 }
 
-val thorVersionCode = providers.gradleProperty("thorVersionCode").orNull?.toIntOrNull() ?: 2
-val thorVersionName = providers.gradleProperty("thorVersionName").orNull ?: "2.1.0"
-val releaseKeystorePath = providers.gradleProperty("thorKeystorePath").orNull
-
 android {
     namespace = "com.thor.assistant"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.thor.assistant"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 35
-        versionCode = thorVersionCode
-        versionName = thorVersionName
-    }
-
-    signingConfigs {
-        create("release") {
-            if (releaseKeystorePath != null) {
-                storeFile = file(releaseKeystorePath)
-            }
-            storePassword = providers.gradleProperty("thorStorePassword").orNull
-            keyAlias = providers.gradleProperty("thorKeyAlias").orNull
-            keyPassword = providers.gradleProperty("thorKeyPassword").orNull
-        }
+        versionCode = 1
+        versionName = "1.0"
     }
 
     compileOptions {
@@ -42,22 +27,36 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
 
+ 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // Firebase AI Logic: Gemini access through Firebase's secure proxy.
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-ai")
+    implementation("com.google.firebase:firebase-auth")
+    // Google account sign-in through Android Credential Manager.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.firebase:firebase-messaging")
+    // BiometricPrompt + Android Keystore-backed approval signing.
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // WebSocket transport for bidirectional Gemini Live audio.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // On-device multilingual language model (downloaded separately from the APK).
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.work:work-runtime-ktx:2.10.1")
+    // LiteRT runtime for WeSpeaker embeddings.
+    implementation("com.google.ai.edge.litert:litert:2.1.5")
 }

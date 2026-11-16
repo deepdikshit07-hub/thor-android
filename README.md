@@ -1,94 +1,81 @@
-# THOR Android Assistant — starter project
+# THOR Android Assistant
 
-This is a lightweight first-stage Android app starter for the Oppo A16 / ARM64 Android devices.
+THOR is an experimental Android personal assistant project. The active development branch is
+`feature/thor-live-mode`; its draft pull request targets `experiment/boss-speaker-verification`. Keep it separate from the main branch while features are being validated.
 
-## Included
-- Text command input
-- Private on-device notes (`note <text>`, `notes`)
-- Private on-device to-do list (`todo <text>`, `tasks`, `done <number>`)
-- Subtle animated THOR title
-- Speech input through the Android speech-recognition activity
-- Android Text-to-Speech
-- English, Hindi and Bengali language selection
-- Open a matching installed app
-- Open Settings
-- Open the dialer (does not place a call)
-- Open an SMS composer (does not send a message)
-- Open the alarm UI for a specified 24-hour time
-- Create a reminder by opening the Clock app with a label and time for user confirmation (`remind 07:30 Take my book`)
-- Open an installed music app (`play music`) or search YouTube for a requested track (`play <song name>`)
-- Web search using the browser
+## Current project features
 
-## Build without Android Studio
-The project is designed to be edited on a phone and built by GitHub Actions.
+- Dark, blue-accented assistant interface with six bottom-navigation sections.
+- Dedicated THOR LIVE bottom-navigation section with animated energy core, bidirectional Gemini Live audio, voice interruption support, and session-only captions (no local chat transcript storage).
+- Animated holographic reactor HUD and startup animation.
+- Custom THOR launcher artwork.
+- Text commands, Android speech-recognition handoff, foreground-service Background Wake with an ongoing microphone notification, and hybrid multilingual Text-to-Speech (prefers installed network voices online and installed local voices offline).
+- English, Hindi, and Bengali response selection.
+- Local notes, tasks, user-taught lessons, and reminders.
+- App launching, selected Android settings shortcuts, dialer/SMS composer handoff, and media-key controls.
+- On-device text generation using the bundled Qwen LiteRT model (about 586 MB). The model is included in the APK so offline AI is ready without a separate model download.
+- Per-device AI Provider Manager: choose Firebase Gemini, direct Gemini API with your own key, OpenAI / ChatGPT API, Groq, OpenRouter, Cloudflare Workers AI, a custom OpenAI-compatible endpoint, or local-only AI. Each provider keeps its own model, endpoint, and encrypted API credential on that installation.
+- Experimental WeSpeaker embedding enrollment; automatic speaker identification is not enabled.
+- Remote Master Mode foundation using Cloudflare Worker/D1, Firebase Authentication, FCM, and
+  Device A biometric signing.
 
-1. Create a GitHub repository named `thor-android`.
-2. Upload the contents of this folder, keeping the same directory structure.
-3. Open the repository's Actions tab and enable Actions if asked.
-4. Select **Build THOR APK** and press **Run workflow**, or push a commit to `main`.
-5. Open the successful workflow run, scroll to **Artifacts**, and download `THOR-debug-apk` for development/testing only. Debug artifacts are runner-signed and are not suitable for production OTA upgrades.
-6. Extract the ZIP and install `app-debug.apk` on your Android phone.
+## Build and download
 
-## Termux editing setup
-Install Termux from its official F-Droid or GitHub distribution. In Termux:
+GitHub Actions builds a debug APK for the active pull request targeting `experiment/boss-speaker-verification` and for supported workflow branches.
 
-```sh
-pkg update && pkg upgrade -y
-pkg install git nano unzip gh -y
-termux-setup-storage
-cd ~/storage/downloads
-unzip THOR-Android-Starter.zip
-cd THOR-Android-Starter
-```
+1. Open the repository's **Actions** tab.
+2. Select the latest successful **Build THOR APK** run for the experimental branch.
+3. Download the `THOR-APK-DOWNLOAD` artifact and extract `app-debug.apk`.
+4. Install it on an Android device after reviewing Android's installation prompt.
 
-Create a new **empty** GitHub repository named `thor-android` in your browser (do not add a README or license). Then, in Termux, run:
+The APK includes the offline model assets downloaded by CI and can therefore be very large. To keep startup responsive and avoid loading a large model into RAM unnecessarily, THOR loads Offline AI only when you tap its button or explicitly request an offline answer.
 
-```sh
-gh auth login
-```
+## THOR Live Mode setup
 
-Choose GitHub.com, HTTPS, and the browser/device-code sign-in option. Complete sign-in on GitHub. Then run:
+THOR Live uses Google's bidirectional Gemini Live API over a WebSocket. It reuses the same Google Gemini API key saved on that installation under **Settings → AI Provider → Google Gemini (own API key)**; there is no second Live-only key, Worker URL, or Firebase sign-in step for this direct-key mode. The key is encrypted at rest with Android Keystore and is never committed to source control. As with any client-side BYOK app, a determined attacker with control of a compromised device may still inspect a key while the app is using it; use a key with appropriate API restrictions and quota limits.
 
-```sh
-git init
-git add .
-git commit -m "Create THOR starter app"
-git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/thor-android.git
-git push -u origin main
-```
+1. In Google AI Studio, create a Gemini API key with access to a model that supports the Gemini Live API.
+2. In THOR, open **Settings → AI Provider**, select **Google Gemini (own API key)**, paste the key once, and save.
+3. Open **LIVE** and start a session. THOR reuses that saved key for the Live WebSocket connection.
+4. Grant microphone permission when Android asks. Headphones are recommended to reduce echo.
 
-Replace `YOUR-USERNAME` with your GitHub username. For later edits:
+Live Mode requires an internet connection while active and may incur Gemini API usage charges or quota limits. Ending the session closes the socket, stops microphone capture and playback, and clears the temporary caption. The optional Cloudflare /v1/live-token endpoint remains available for a future server-proxied deployment, but it is not required by the current Android Live client.
 
-```sh
-git add .
-git commit -m "Update THOR"
-git push
-```
 
-Never paste a password or access token into chat or commit it into the project.
+## AI provider setup
 
-## OTA updates
+Open **Settings → AI Provider** to select the provider for that installation. Firebase Gemini uses THOR's managed Firebase AI Logic connection. Direct Gemini API accepts a Google AI Studio key; OpenAI / ChatGPT API accepts an OpenAI API key; Groq and OpenRouter have preset endpoints; Cloudflare Workers AI requires the account-specific endpoint; and Custom accepts an OpenAI-compatible chat-completions API. Each provider has its own model and key slot. Users can replace or remove saved keys in the app. Keys are encrypted at rest with Android Keystore AES-GCM and remain on that installation. API usage is billed separately from consumer subscriptions (for example, ChatGPT Plus does not include OpenAI API credits). Free tiers, quotas, and terms are controlled by each provider. A normal model API key does not automatically enable live web search or guarantee current affairs are up to date; that requires a provider's search/grounding feature or a separate search integration. Selecting Local-only keeps THOR's AI prompts on-device.
 
-THOR checks the latest GitHub Release when the app starts, provides a **CHECK FOR UPDATES** button, and schedules a network-connected background check approximately every hour (Android may defer background work to save battery). When a newer release is found, THOR posts an Android notification; tapping it opens THOR to review and download the update. The updater verifies the APK SHA-256 checksum and opens Android's package installer. Android requires the user to approve installation, and Android 13+ users must allow THOR notifications for background alerts.
+Credentials are encrypted at rest using an Android Keystore AES-GCM key. Android backup is disabled for this app. Credentials are not embedded in the APK or shared between devices. Never paste API keys into chat, source control, screenshots, or issue reports. A provider's free tier, rate limits, model names, and availability are controlled by that provider and can change. A 429 response triggers a one-hour per-provider cooldown and THOR falls back to local AI. This is a client-side BYOK design; a production multi-user service should proxy requests through a trusted backend rather than distribute a shared secret.
 
-Before publishing the first OTA release:
+## Master Mode Google sign-in setup
 
-1. Create one permanent Android release keystore and keep a secure offline backup.
-2. Add these four GitHub Actions repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
-3. Confirm that the release keystore certificate matches the certificate on currently installed THOR builds.
-4. Only after the signing identity is confirmed and the PR is approved, merge it into `main`. The release workflow then builds and publishes a uniquely versioned OTA release automatically.
+Google sign-in for remote Master Mode requires a correctly configured Firebase Android OAuth client. The checked-in `app/google-services.json` currently has an empty `oauth_client` array, so this repository alone cannot complete Google sign-in until the Firebase project configuration is refreshed.
 
-The release workflow also uploads the signed production APK and `latest.json` to that run's **Artifacts** section for 90 days. Distribute the signed release APK from the `Publish THOR OTA Release` workflow—not the debug APK. The debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
+1. In Android Studio, run the Gradle task `app → Tasks → android → signingReport` (or run `./gradlew signingReport`) and record the SHA-1 and SHA-256 fingerprints for the debug keystore. Repeat for the release signing key used to distribute the app.
+2. In Firebase Console, open project `thor-ai-2791b` → Project settings → Your apps → Android app `com.thor.assistant`. Add the debug SHA-1 and SHA-256 fingerprints; add the release fingerprints too before distributing a release build.
+3. In Firebase Console → Authentication → Sign-in method, enable **Google** and select the project support email.
+4. In Google Cloud Console for the same Firebase project, complete the OAuth consent screen / Google Auth Platform branding and audience setup. If the app is in Testing mode, add each tester's Google account as a test user.
+5. Return to Firebase Project settings and download a fresh `google-services.json`. Replace `app/google-services.json` with that downloaded file; do not manually invent or edit OAuth client IDs. Confirm the file contains a Web OAuth client (client type 3) and that the Google Services Gradle plugin generates a non-empty `default_web_client_id`.
+6. Rebuild and install the new APK. Test Google sign-in on Device A and Device B. Confirm Firebase Authentication → Users shows the signed-in account on each device.
+7. Separately configure the Cloudflare Worker secrets, D1 schema, FCM credentials, and registered approver device for Master Mode approval. Google sign-in alone does not grant Master Mode; the Worker approval and device verification checks must also pass.
 
-The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release. Workflow builds use the repository-wide GitHub run ID as their version code so later workflow APKs have a higher version code.
+Do not share OAuth secrets, service-account JSON, API keys, or debug tokens in chat or commit them to Git. The Android Firebase config is a client configuration file, but it must still come from the correct Firebase project and app registration.
 
-## Device notes
-- `minSdk 24` supports older Android releases; the app should run on Android 10/11 and newer.
-- The speech-recognition activity is provided by the device's installed speech service. `PREFER_OFFLINE` is only a preference and does not guarantee offline recognition.
-- For offline speech, download the required language packs in the phone's speech input settings if your installed engine offers them.
-- Text-to-Speech voice availability depends on installed Android TTS voice data.
-- This starter does not read private files, messages, call logs, or notifications. It does not have unrestricted phone access.
-- Calling opens the dialer; SMS opens the compose screen. You review and confirm those actions yourself.
-- The offline AI model (~586 MB) is downloaded separately on demand after installation and stored in THOR's private app storage. It is not bundled into each APK update, so routine app updates stay much smaller. Each device downloads the model once unless its app data is cleared.\n- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
-- Do not place API keys, passwords, or tokens in source code or GitHub commits.
+## Important limitations
+
+- A successful CI build is not a physical-device test. The repository currently has no Android instrumentation test suite, so lint and the unit-test task do not prove real microphone, speaker, notification, or device compatibility.
+- Android's speech-recognition service may require internet; requesting offline recognition does not guarantee offline speech-to-text.
+- Hybrid TTS selects from voices installed in the Android speech engine; online voices are used only when the device reports validated internet, with local voices preferred offline. Voice quality and language coverage depend on the installed engine and voice data; it does not use or reproduce ChatGPT Live's proprietary voice.
+- Automatic Boss voice recognition is not active; the speaker embedding work is experimental and not authentication.
+- Remote Master Mode needs the Cloudflare Worker, D1 schema, Firebase secrets/accounts, FCM, and two-device testing.
+- Remote Master Mode session administration is enforced by the Cloudflare Worker using the configured master UID and registered approver device. It is not a general app lock: ordinary phone controls remain available to anyone who can unlock and use this installation.
+- Accessibility navigation requires the user to enable THOR Navigation manually in Android settings.
+- Background Wake requires microphone and notification permissions and uses an Android foreground service; battery management and speech-provider behavior can still affect availability. Reminder alarms and FCM delivery can also be delayed by Android power and notification settings.
+
+## Security and configuration
+
+The Android Firebase configuration file identifies project `thor-ai-2791b` (project number
+`418315674236`). Keep the Worker `FIREBASE_PROJECT_ID`, Firebase Web API key, and service-account
+project consistent with that project. Never commit service-account JSON, private keys, passwords,
+or App Check debug tokens.
