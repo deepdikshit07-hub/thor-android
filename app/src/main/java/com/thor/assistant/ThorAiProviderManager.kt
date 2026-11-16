@@ -210,7 +210,15 @@ class ThorAiProviderManager(private val context: Context) {
     data class StreamAnswer(val provider: Provider, val text: String)
 
     suspend fun streamAutomatically(prompt: String, geminiFirebase: suspend ((String) -> Unit) -> String, onChunk: (String) -> Unit): StreamAnswer {
-        val candidates = buildList { add(Provider.GEMINI); add(Provider.GROQ); if (allowMeteredAutoProviders()) { add(Provider.CLAUDE); add(Provider.OPENAI) } }
+        val candidates = buildList {
+            add(Provider.GEMINI)
+            add(Provider.GROQ)
+            add(Provider.GEMINI_API)
+            if (allowMeteredAutoProviders()) {
+                add(Provider.CLAUDE)
+                add(Provider.OPENAI)
+            }
+        }
         val failures = mutableListOf<String>()
         for (provider in candidates) {
             if (provider != Provider.GEMINI && settings(provider).apiKey.isBlank()) continue
