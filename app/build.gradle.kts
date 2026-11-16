@@ -24,6 +24,7 @@ android {
         targetSdk = 35
         versionCode = thorVersionCode
         versionName = thorVersionName
+        ndk { abiFilters += setOf("arm64-v8a") }
     }
 
     signingConfigs {
@@ -54,10 +55,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
     implementation("com.google.firebase:firebase-ai")
+    implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.firebase:firebase-appcheck-playintegrity")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

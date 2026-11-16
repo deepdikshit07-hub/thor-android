@@ -16,12 +16,9 @@ object GeminiAssistant {
     private const val TAG = "THOR_GEMINI"
     private const val REQUEST_TIMEOUT_MS = 60_000L
 
-    private val model by lazy {
-        Firebase.ai(backend = GenerativeBackend.googleAI())
-            .generativeModel("gemini-3.8-flash")
-    }
-
-    suspend fun ask(prompt: String): String = withTimeout(REQUEST_TIMEOUT_MS) {
+    suspend fun ask(prompt: String, modelName: String = "gemini-3.8-flash"): String = withTimeout(REQUEST_TIMEOUT_MS) {
+        val model = Firebase.ai(backend = GenerativeBackend.googleAI())
+            .generativeModel(modelName)
         var lastError: Exception? = null
 
         // A short retry helps when App Check is refreshing a token or the mobile
