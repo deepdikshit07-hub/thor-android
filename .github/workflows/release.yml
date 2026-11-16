@@ -135,7 +135,7 @@ jobs:
 
           APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
 
           mkdir -p release-assets
           cp "$APK" release-assets/thor-release.apk
@@ -165,6 +165,9 @@ jobs:
           tag_name: ${{ steps.build.outputs.tag_name }}
           name: THOR ${{ steps.build.outputs.version_name }}
           generate_release_notes: true
+          draft: false
+          prerelease: false
+          make_latest: true
           files: |
             release-assets/thor-release.apk
             release-assets/latest.json
