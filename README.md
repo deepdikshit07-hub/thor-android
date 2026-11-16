@@ -77,3 +77,13 @@ Never paste a password or access token into chat or commit it into the project.
 - Calling opens the dialer; SMS opens the compose screen. You review and confirm those actions yourself.
 - The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
 - Do not place API keys, passwords, or tokens in source code or GitHub commits.
+
+
+## AI provider selection and web search
+
+- Open the gear icon or **Settings** in the bottom navigation, then choose **AI provider & model**. The home screen also has a direct **AI models** tile.
+- **Automatic (recommended)** tries Firebase Gemini first, then only the other providers for which you have saved API credentials. Metered Claude/OpenAI API routes remain opt-in.
+- **ChatGPT account** is optional. THOR does not silently switch away from ChatGPT after plan usage has been granted; if the account is not connected, it uses the automatic provider route instead.
+- Choose a provider, choose a suggested model or enter its exact model ID, and tap **TEST ONLINE CONNECTION** before saving.
+- Firebase Gemini uses Firebase AI Logic and App Check. For a sideloaded debug APK, register the debug token printed by the app in Logcat at Firebase Console → App Check → your Android app → Manage debug tokens. Production builds use Play Integrity and must be distributed through a supported install path.
+- The home screen's **Web search** tile and the `search <words>` chat command show search results inside THOR. If the public search endpoint is unavailable, THOR opens the same query in the browser instead.
