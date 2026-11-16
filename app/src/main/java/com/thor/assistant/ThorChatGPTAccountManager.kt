@@ -99,7 +99,12 @@ class ThorChatGPTAccountManager(private val context: Context) {
                 "code_challenge" to challenge,
                 "ext_agent_host_id" to hostId
             )
-            if (existingClient == null) params["agent_name_hint"] = "THOR"
+            if (existingClient == null) {
+                params["agent_name_hint"] = "THOR"
+            } else {
+                decrypt(prefs.getString("id_token", null))?.let { params["id_token_hint"] = it }
+                prefs.getString("email", null)?.takeIf { it.isNotBlank() }?.let { params["login_hint"] = it }
+            }
             val authUrl = authorizeEndpoint + "?" + params.entries.joinToString("&") {
                 enc(it.key) + "=" + enc(it.value)
             }
@@ -133,8 +138,14 @@ class ThorChatGPTAccountManager(private val context: Context) {
                         write(bytes)
                         flush()
                     }
+                    if (!target.startsWith("/auth/callback?") || queryState != state) {
+                        error("ChatGPT sign-in callback could not be verified. Please try again.")
+                    }
                     if (oauthError != null) error("ChatGPT sign-in was cancelled or denied: $oauthError")
-                    if (code.isNullOrBlank() || queryState != state) error("ChatGPT sign-in callback could not be verified. Please try again.")
+                    if (code.isNullOrBlank()) error("ChatGPT did not return an authorization code.")
+                    if (existingClient != null && !returnedClientId.isNullOrBlank() && returnedClientId != existingClient) {
+                        error("OpenAI returned a different account registration. Reconnect the original account.")
+                    }
                     val clientId = returnedClientId?.takeIf { it.isNotBlank() } ?: existingClient
                         ?: error("OpenAI did not return the registered client ID.")
                     Triple(code, clientId, redirectUri)
@@ -153,6 +164,10 @@ class ThorChatGPTAccountManager(private val context: Context) {
             val idToken = token.optString("id_token")
             if (idToken.isBlank()) error("ChatGPT did not return an identity token.")
             val identity = verifyIdToken(idToken, callback.second, nonce, jwksUri)
+            val previousSubject = prefs.getString("subject", null)
+            if (existingClient != null && !previousSubject.isNullOrBlank() && identity.optString("sub") != previousSubject) {
+                error("The ChatGPT account changed during reconnection. Your saved connection was not replaced.")
+            }
             val scope = token.optString("scope").ifBlank { error("OpenAI did not return the approved permissions.") }
             val granted = scope.split(' ').toSet()
             if (!granted.contains("resource.invoke") || !granted.contains("chatgpt.tokens.use.direct")) {
