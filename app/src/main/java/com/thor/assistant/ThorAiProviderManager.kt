@@ -27,6 +27,7 @@ import kotlinx.coroutines.CancellationException
  */
 class ThorAiProviderManager(private val context: Context) {
     enum class Provider(val title: String, val defaultModel: String, val defaultEndpoint: String) {
+        CHATGPT_ACCOUNT("ChatGPT account (no API key)", "", ""),
         AUTO("Automatic (recommended)", "", ""),
         GEMINI("Google Gemini Flash (Firebase)", "gemini-3.8-flash", ""),
         GEMINI_API("Google Gemini Flash (API key)", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
@@ -34,6 +35,8 @@ class ThorAiProviderManager(private val context: Context) {
         CLAUDE("Claude (Anthropic API)", "claude-haiku-5-5", "https://api.anthropic.com/v1/messages"),
         OPENAI("OpenAI / ChatGPT API", "gpt-4o-mini", "https://api.openai.com/v1/chat/completions"),
         OPENROUTER("OpenRouter", "meta-llama/llama-3.3-70b-instruct:free", "https://openrouter.ai/api/v1/chat/completions"),
+        DEEPSEEK("DeepSeek", "deepseek-flash", "https://api.deepseek.com/chat/completions"),
+        MISTRAL("Mistral AI", "mistral-small-latest", "https://api.mistral.ai/v1/chat/completions"),
         CLOUDFLARE("Cloudflare Workers AI", "@cf/meta/llama-3.1-8b-instruct", ""),
         CUSTOM("Custom OpenAI-compatible API", "", ""),
         LOCAL("On-device AI only", "", "")
@@ -58,6 +61,12 @@ class ThorAiProviderManager(private val context: Context) {
                 .putBoolean("auto_provider_migration_v1", true)
                 .apply()
         }
+        if (!prefs.getBoolean("chatgpt_account_default_v1", false)) {
+            if (prefs.getString("provider", Provider.AUTO.name) == Provider.AUTO.name) {
+                prefs.edit().putString("provider", Provider.CHATGPT_ACCOUNT.name).apply()
+            }
+            prefs.edit().putBoolean("chatgpt_account_default_v1", true).apply()
+        }
     }
 
     fun allowMeteredAutoProviders(): Boolean =
@@ -69,8 +78,8 @@ class ThorAiProviderManager(private val context: Context) {
 
     fun settings(forProvider: Provider? = null): Settings {
         val provider = forProvider ?: runCatching {
-            Provider.valueOf(prefs.getString("provider", Provider.AUTO.name) ?: Provider.AUTO.name)
-        }.getOrDefault(Provider.AUTO)
+            Provider.valueOf(prefs.getString("provider", Provider.CHATGPT_ACCOUNT.name) ?: Provider.CHATGPT_ACCOUNT.name)
+        }.getOrDefault(Provider.CHATGPT_ACCOUNT)
         val suffix = provider.name
         val savedModel = prefs.getString("model_$suffix", null)
         // Gemini now limits 2.5 model access for newly created projects.
@@ -162,7 +171,7 @@ class ThorAiProviderManager(private val context: Context) {
 
     suspend fun stream(provider: Provider, prompt: String, onChunk: (String) -> Unit, maxTokens: Int = 512): String = withContext(Dispatchers.IO) {
         val config = settings(provider)
-        require(provider !in listOf(Provider.AUTO, Provider.LOCAL, Provider.GEMINI)) { "This provider uses a different streaming transport." }
+        require(provider !in listOf(Provider.CHATGPT_ACCOUNT, Provider.AUTO, Provider.LOCAL, Provider.GEMINI)) { "This provider uses a different streaming transport." }
         require(config.apiKey.isNotBlank()) { "Add an API key for " + provider.title + " in AI Provider settings." }
         val endpoint = config.endpoint.trim().ifBlank { provider.defaultEndpoint }
         require(endpoint.startsWith("https://", ignoreCase = true)) { "Provider endpoint must use HTTPS." }
@@ -253,6 +262,7 @@ class ThorAiProviderManager(private val context: Context) {
             val minutes = ((blockedUntil - System.currentTimeMillis()) / 60_000L).coerceAtLeast(1L)
             error("${config.provider.title} quota cooldown is active for about $minutes more minutes.")
         }
+        require(config.provider != Provider.CHATGPT_ACCOUNT) { "ChatGPT account requests must use ThorChatGPTAccountManager." }
         require(config.provider != Provider.AUTO) { "Automatic mode must use askAutomatically()." }
         require(config.provider != Provider.LOCAL) { "Local AI is selected." }
         require(config.provider != Provider.GEMINI) { "Gemini requests must use Firebase AI Logic." }
