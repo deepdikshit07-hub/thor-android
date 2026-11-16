@@ -1571,6 +1571,55 @@ lower.startsWith("অ্যালার্ম ") -> {
             setTextColor(Color.LTGRAY)
             setPadding(0, 12, 0, 4)
         }, matchWrap())
+        val chatgpt = ThorChatGPTAccountManager(this)
+        val accountStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 10, 0, 4)
+        }
+        fun refreshChatGPTStatus() {
+            val status = chatgpt.status()
+            accountStatus.text = if (status.connected && status.planUsageEnabled) {
+                "ChatGPT account connected: \${status.email.ifBlank { "account verified" }}\nPlan usage permission is active."
+            } else if (status.connected) {
+                "ChatGPT identity connected, but plan usage permission is not active."
+            } else {
+                "ChatGPT is not connected. THOR will use its no-key Gemini fallback until you connect an eligible account."
+            }
+        }
+        refreshChatGPTStatus()
+        panel.addView(accountStatus, matchWrap())
+        val connectChatGPT = Button(this).apply {
+            text = if (chatgpt.status().connected) "RECONNECT CHATGPT ACCOUNT" else "CONTINUE WITH CHATGPT"
+            setOnClickListener {
+                isEnabled = false
+                text = "OPENING CHATGPT..."
+                mainScope.launch {
+                    try {
+                        val result = chatgpt.signIn(this@MainActivity)
+                        refreshChatGPTStatus()
+                        Toast.makeText(this@MainActivity, if (result.planUsageEnabled) "ChatGPT account connected." else "ChatGPT connected without plan usage permission.", Toast.LENGTH_LONG).show()
+                    } catch (error: Exception) {
+                        Toast.makeText(this@MainActivity, "ChatGPT sign-in failed: \${error.message ?: "please retry"}", Toast.LENGTH_LONG).show()
+                    } finally {
+                        isEnabled = true
+                        text = if (chatgpt.status().connected) "RECONNECT CHATGPT ACCOUNT" else "CONTINUE WITH CHATGPT"
+                    }
+                }
+            }
+        }
+        panel.addView(connectChatGPT, matchWrap())
+        val disconnectChatGPT = Button(this).apply {
+            text = "DISCONNECT CHATGPT ACCOUNT"
+            setOnClickListener {
+                chatgpt.disconnect()
+                refreshChatGPTStatus()
+                connectChatGPT.text = "CONTINUE WITH CHATGPT"
+                Toast.makeText(this@MainActivity, "ChatGPT account disconnected from THOR.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        panel.addView(disconnectChatGPT, matchWrap())
+
         val allowMetered = android.widget.CheckBox(this).apply {
             text = "Allow Claude/OpenAI in automatic mode (may incur API charges)"
             isChecked = manager.allowMeteredAutoProviders()
@@ -1585,6 +1634,12 @@ lower.startsWith("অ্যালার্ম ") -> {
                 text = "TESTING..."
                 mainScope.launch {
                     try {
+                        if (providers[providerSpinner.selectedItemPosition] == ThorAiProviderManager.Provider.CHATGPT_ACCOUNT) {
+                            if (!chatgpt.status().planUsageEnabled) error("Connect an eligible ChatGPT account first. The no-key Gemini fallback is available for free-tier use.")
+                            chatgpt.streamResponse("Reply with only the word OK.", onChunk = {})
+                            Toast.makeText(this@MainActivity, "ChatGPT account connection verified.", Toast.LENGTH_LONG).show()
+                            return@launch
+                        }
                         val result = manager.streamAutomatically("Reply with only the word OK.",
                             geminiFirebase = { emit ->
                                 if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
@@ -1603,11 +1658,13 @@ lower.startsWith("অ্যালার্ম ") -> {
         var previousProvider = current.provider
         fun applyProviderState(provider: ThorAiProviderManager.Provider) {
             val needsEndpointAndKey = provider !in listOf(
+                ThorAiProviderManager.Provider.CHATGPT_ACCOUNT,
                 ThorAiProviderManager.Provider.GEMINI,
                 ThorAiProviderManager.Provider.AUTO,
                 ThorAiProviderManager.Provider.LOCAL
             )
             modelField.isEnabled = provider !in listOf(
+                ThorAiProviderManager.Provider.CHATGPT_ACCOUNT,
                 ThorAiProviderManager.Provider.AUTO,
                 ThorAiProviderManager.Provider.LOCAL
             )
@@ -1706,6 +1763,19 @@ lower.startsWith("অ্যালার্ম ") -> {
                         if (!firebaseReady) error("Firebase initialization failed. Check Firebase configuration and App Check.")
                         GeminiAssistant.stream(styleInstruction, selectedSettings.model, onToken)
                         providerTitle = selectedSettings.model
+                    }
+                    ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> {
+                        try {
+                            if (!chatgpt.status().planUsageEnabled) error("No ChatGPT plan connection is active.")
+                            chatgpt.streamResponse(styleInstruction, onChunk = onToken)
+                            providerTitle = "ChatGPT account"
+                        } catch (accountError: Exception) {
+                            if (streamed.isNotEmpty()) throw accountError
+                            if (!firebaseReady) throw accountError
+                            runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("ChatGPT account unavailable — using THOR's no-key Gemini fallback.\n") }
+                            GeminiAssistant.stream(styleInstruction, providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model, onToken)
+                            providerTitle = "Gemini (no-key fallback)"
+                        }
                     }
                     else -> {
                         providerManager.stream(selectedProvider, styleInstruction, onToken)
