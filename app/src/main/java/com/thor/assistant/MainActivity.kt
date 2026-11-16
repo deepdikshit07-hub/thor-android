@@ -1776,7 +1776,6 @@ lower.startsWith("অ্যালার্ম ") -> {
                                 Toast.makeText(this@MainActivity, "Model verified: ${selected.title} / ${modelField.text}", Toast.LENGTH_LONG).show()
                             }
                         }
-                        Toast.makeText(this@MainActivity, "Online AI verified: " + result.provider.title, Toast.LENGTH_LONG).show()
                     } catch (error: Exception) {
                         Toast.makeText(this@MainActivity, "Online test failed: " + (error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
                     } finally { runOnUiThread { isEnabled = true; text = "TEST ONLINE CONNECTION" } }
