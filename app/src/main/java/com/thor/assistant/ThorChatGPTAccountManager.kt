@@ -272,13 +272,16 @@ class ThorChatGPTAccountManager(private val context: Context) {
             connection.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
             val statusCode = connection.responseCode
             if (statusCode !in 200..299) {
-                val raw = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                val detail = runCatching { JSONObject(raw).optJSONObject("error")?.optString("message") }.getOrNull().orEmpty()
-                if (detail.contains("subscription_sharing_usage_limit_exceeded") ||
-                    detail.contains("subscription_sharing_usage_unavailable")) {
-                    error("ChatGPT plan usage is unavailable or has reached an app limit. Check ChatGPT Settings > Usage, or choose another provider in THOR settings.")
-                }
-                error("ChatGPT request failed (HTTP $statusCode): ${detail.take(180).ifBlank { "please reconnect and retry" }}")
+                val raw = connection.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+                val payload = runCatching { JSONObject(raw) }.getOrNull()
+                val apiError = payload?.optJSONObject("error")
+                val code = apiError?.optString("code").orEmpty()
+                    .ifBlank { payload?.optString("code").orEmpty() }
+                val detail = apiError?.optString("message").orEmpty()
+                    .ifBlank { payload?.optString("detail").orEmpty() }
+                    .ifBlank { payload?.optString("message").orEmpty() }
+                val requestId = connection.getHeaderField("x-request-id").orEmpty()
+                error(chatGPTErrorMessage(statusCode, code, detail, requestId))
             }
             connection.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                 lines.forEach { line ->
@@ -295,12 +298,21 @@ class ThorChatGPTAccountManager(private val context: Context) {
                         "response.failed" -> {
                             val err = event.optJSONObject("response")?.optJSONObject("error")
                             val code = err?.optString("code").orEmpty()
-                            if (code.contains("subscription_sharing_usage")) {
-                                error("ChatGPT plan usage is unavailable or has reached an app limit. Check ChatGPT Settings > Usage, or choose another provider in THOR settings.")
-                            }
-                            error(err?.optString("message")?.take(180).orEmpty().ifBlank { "ChatGPT response failed." })
+                            val detail = err?.optString("message").orEmpty()
+                            error(chatGPTErrorMessage(200, code, detail, event.optString("request_id")))
                         }
-                        "error" -> error(event.optString("message").ifBlank { "ChatGPT stream failed." })
+                        "response.incomplete" -> {
+                            val reason = event.optJSONObject("response")?.optJSONObject("incomplete_details")
+                                ?.optString("reason").orEmpty()
+                            error("ChatGPT response was incomplete" + if (reason.isBlank()) "." else ": $reason.")
+                        }
+                        "error" -> {
+                            val err = event.optJSONObject("error")
+                            val code = err?.optString("code").orEmpty()
+                            val detail = err?.optString("message").orEmpty()
+                                .ifBlank { event.optString("message") }
+                            error(chatGPTErrorMessage(200, code, detail, event.optString("request_id")))
+                        }
                     }
                 }
             }
@@ -309,6 +321,36 @@ class ThorChatGPTAccountManager(private val context: Context) {
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun chatGPTErrorMessage(status: Int, code: String, detail: String, requestId: String): String {
+        val normalizedCode = code.trim()
+        val guidance = when (normalizedCode) {
+            "subscription_sharing_user_not_eligible" ->
+                "This ChatGPT account, workspace, or policy is not eligible to share plan usage with THOR. Check the account plan and workspace permissions."
+            "subscription_sharing_usage_limit_exceeded" ->
+                "THOR has reached its ChatGPT app-usage limit. Review ChatGPT Settings > Usage before trying again."
+            "subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable" ->
+                "OpenAI could not verify ChatGPT plan usage right now. Keep the account connected and retry later."
+            "subscription_sharing_route_not_supported" ->
+                "OpenAI does not allow this request route for ChatGPT plan usage. THOR must use the supported Responses API route."
+            "chatpass_v2_scope_not_authorized", "chatpass_v2_invalid_authorization_context" ->
+                "The ChatGPT plan-usage permission was not granted for THOR. Reconnect and approve the separate plan-usage permission."
+            "subscription_sharing_invalid_user" ->
+                "OpenAI could not validate this ChatGPT session. Reconnect the account in THOR settings."
+            else -> when (status) {
+                401 -> "The ChatGPT sign-in token or plan-usage permission was not accepted. Reconnect the account in THOR settings."
+                403 -> "ChatGPT plan usage was blocked by an account, workspace, policy, or region restriction."
+                503 -> "ChatGPT plan routing is temporarily unavailable. Keep the account connected and retry later."
+                else -> detail.take(220).ifBlank { "ChatGPT could not complete the request." }
+            }
+        }
+        val suffix = buildString {
+            if (normalizedCode.isNotBlank()) append(" [").append(normalizedCode).append("]")
+            if (detail.isNotBlank() && detail != guidance) append(" Details: ").append(detail.take(180))
+            if (requestId.isNotBlank()) append(" Request ID: ").append(requestId.take(80))
+        }
+        return "ChatGPT request failed (HTTP $status): $guidance$suffix"
     }
 
     private fun validAccessToken(): String {
