@@ -47,7 +47,7 @@ On Device A, open THOR > MASTER MODE SETUP, enter the Worker URL, choose **SET U
 
 ## Gemini Live token provisioning
 
-The same authenticated Worker now exposes `POST /v1/live-token` for the Android Live tab. It validates the Firebase ID token, accepts only an allowlisted voice name, limits each Firebase UID to 12 token requests per hour using the D1 `live_token_requests` table, and requests a single-use 30-minute Gemini Live token constrained to the `gemini-3.8-live` model and audio output. The permanent Google AI Studio key remains a Cloudflare Worker secret; the app receives only the short-lived token.
+The same authenticated Worker now exposes `POST /v1/live-token` for the Android Live tab. It validates the Firebase ID token, accepts only an allowlisted voice name, limits each Firebase UID to 12 token requests per hour using the D1 `live_token_requests` table, and requests a single-use 30-minute Gemini Live token constrained to the `models/gemini-3.1-flash-live-preview` model and audio output. The one-time connection window is 60 seconds; the issued token expires after 30 minutes and is limited to one use. The permanent Google AI Studio key remains a Cloudflare Worker secret; the app receives only the short-lived token.
 
 Add the Worker secret `GEMINI_API_KEY` in Cloudflare. Apply the updated D1 schema before deploying so the token-rate-limit table exists. Do not place the key in `wrangler.toml`, GitHub Actions variables, Android resources, or the repository.
 
