@@ -69,7 +69,7 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 
 ## Local validation
 
-From this directory, run `npm run build` to syntax-check the Worker and `npm test` to run the route tests. The GitHub Worker-check workflow runs these checks for pull requests that change `cloudflare/master-mode/**`.
+From this directory, run `npm run build` to syntax-check the Worker and `npm test` to run the route tests. The default-branch GitHub Worker-check workflow runs these checks for pull requests that change `cloudflare/master-mode/**`.
 
 Preview deployments intentionally have no D1 binding until a separate non-production database is provisioned. Their `/health` endpoint remains available, while `/v1/*` operations return HTTP 503. Do not attach the production `thor-master-approval` D1 database to a preview deployment.
 
