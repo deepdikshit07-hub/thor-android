@@ -1630,7 +1630,9 @@ lower.startsWith("অ্যালার্ম ") -> {
                     val allModels = if (selectedModel.isNotBlank() && accountModels.none { it.second == selectedModel }) {
                         listOf("Current/custom: $selectedModel" to selectedModel) + accountModels
                     } else accountModels
-                    applyModelChoices(allModels, selectedModel)
+                    val resolvedModel = selectedModel.ifBlank { accountModels.firstOrNull()?.second.orEmpty() }
+                    applyModelChoices(allModels, resolvedModel)
+                    if (selectedModel.isBlank() && resolvedModel.isNotBlank()) modelField.setText(resolvedModel)
                     if (allModels.isEmpty()) modelAdapter.add("No models available for this account")
                 } catch (error: Exception) {
                     applyModelChoices(withSaved, selectedModel)
