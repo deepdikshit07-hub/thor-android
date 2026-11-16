@@ -15,6 +15,5 @@ FIREBASE_PROJECT_ID = "thor-ai-2791b"
 # FIREBASE_SERVICE_ACCOUNT_JSON
 # GEMINI_API_KEY
 
-[[previews.d1_databases]]
-binding = "DB"
-database_id = "81128c52-d287-40b2-86a7-7a07991f6fe3"
+# Preview deployments intentionally have no D1 binding until a separate
+# non-production database is provisioned. Never point previews at production data.
