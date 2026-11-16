@@ -1637,7 +1637,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> emptyList()
                 ThorAiProviderManager.Provider.GEMINI,
                 ThorAiProviderManager.Provider.GEMINI_API -> listOf(
-                    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"
+                    "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.5-flash-lite"
                 ).map { it to it }
                 ThorAiProviderManager.Provider.GROQ -> listOf(
                     "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"
@@ -1959,7 +1959,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                         } else {
                             runOnUiThread {
                                 if (!isFinishing && !isDestroyed) {
-                                    chat.append("ChatGPT plan usage is not connected. Trying THOR's configured automatic providers…\\n")
+                                    chat.append("ChatGPT plan usage is not connected. Trying THOR's configured automatic providers…\n")
                                 }
                             }
                             val result = providerManager.streamAutomatically(
