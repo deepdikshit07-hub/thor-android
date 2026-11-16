@@ -1586,11 +1586,8 @@ lower.startsWith("অ্যালার্ম ") -> {
             setPadding(22, 8, 22, 4)
         }
         val providerSpinner = Spinner(this)
-        providerSpinner.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            providers.map { it.title }
-        )
+        providerSpinner.adapter = premiumSpinnerAdapter(providers.map { it.title })
+        providerSpinner.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
         providerSpinner.setSelection(providers.indexOf(current.provider).coerceAtLeast(0))
 
         fun field(label: String, value: String, hint: String, password: Boolean = false): EditText {
@@ -1619,8 +1616,9 @@ lower.startsWith("অ্যালার্ম ") -> {
             setPadding(0, 10, 0, 3)
         })
         val modelSpinner = Spinner(this)
-        val modelAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, mutableListOf("Select a model"))
+        val modelAdapter = premiumSpinnerAdapter(listOf("Select a model"))
         modelSpinner.adapter = modelAdapter
+        modelSpinner.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
         var modelChoices: List<Pair<String, String>> = emptyList()
         fun applyModelChoices(choices: List<Pair<String, String>>, selectedModel: String) {
             modelChoices = choices
