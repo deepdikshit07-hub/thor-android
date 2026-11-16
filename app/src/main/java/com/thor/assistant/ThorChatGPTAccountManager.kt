@@ -95,6 +95,10 @@ class ThorChatGPTAccountManager(private val context: Context) {
         val state = randomUrlToken(32)
         val nonce = randomUrlToken(32)
         val verifier = randomUrlToken(48)
+        // A returning user who previously allowed identity sign-in but declined
+        // plan sharing must be shown consent again when they explicitly tap
+        // "ENABLE CHATGPT PLAN USAGE". Ordinary reconnects must not force consent.
+        val requestPlanConsent = status().connected && !status().planUsageEnabled
         val challenge = Base64.encodeToString(
             MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(StandardCharsets.US_ASCII)),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
@@ -121,6 +125,11 @@ class ThorChatGPTAccountManager(private val context: Context) {
             } else {
                 decrypt(prefs.getString("id_token", null))?.let { params["id_token_hint"] = it }
                 prefs.getString("email", null)?.takeIf { it.isNotBlank() }?.let { params["login_hint"] = it }
+            }
+            if (requestPlanConsent) {
+                // OpenAI's open-source Sign in with ChatGPT flow supports prompt=consent
+                // for a deliberate plan-usage opt-in after an earlier decline.
+                params["prompt"] = "consent"
             }
             val authUrl = authorizeEndpoint + "?" + params.entries.joinToString("&") {
                 enc(it.key) + "=" + enc(it.value)
@@ -305,6 +314,10 @@ class ThorChatGPTAccountManager(private val context: Context) {
     private fun validAccessToken(): String {
         val expiresAt = prefs.getLong("expires_at", 0L)
         val current = decrypt(prefs.getString("access_token", null))
+        val savedScopes = prefs.getString("scope", "").orEmpty().split(' ').filter { it.isNotBlank() }.toSet()
+        if (!savedScopes.contains("resource.invoke") || !savedScopes.contains("chatgpt.tokens.use.direct")) {
+            error("ChatGPT plan usage permission is not enabled for this connection. Tap ENABLE CHATGPT PLAN USAGE and approve the separate usage permission.")
+        }
         if (!current.isNullOrBlank() && System.currentTimeMillis() < expiresAt - 60_000L) return current
         val refresh = decrypt(prefs.getString("refresh_token", null))
             ?: error("Your ChatGPT account is disconnected. Connect it again in THOR settings.")
@@ -346,6 +359,10 @@ class ThorChatGPTAccountManager(private val context: Context) {
             .putString("scope", refreshedScope)
             .putLong("expires_at", System.currentTimeMillis() + token.optLong("expires_in", 3600L) * 1000L)
             .apply()
+        val refreshedScopes = refreshedScope.split(' ').filter { it.isNotBlank() }.toSet()
+        if (!refreshedScopes.contains("resource.invoke") || !refreshedScopes.contains("chatgpt.tokens.use.direct")) {
+            error("ChatGPT refreshed the sign-in but plan-usage permission is no longer active. Re-enable it in THOR settings.")
+        }
         return access
     }
 
