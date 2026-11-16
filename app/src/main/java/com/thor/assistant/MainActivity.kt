@@ -813,7 +813,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 val results = ThorWebSearchManager.search(query)
                 if (results.isEmpty()) {
                     addMessage("THOR", "The search provider returned no readable results. Opening the search in your browser instead.")
-                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query) + "&kp=1)), "Opening web search.")
+                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query) + "&kp=1")), "Opening web search.")
                     return@launch
                 }
                 val labels = results.mapIndexed { index, result ->
@@ -832,7 +832,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             } catch (error: Exception) {
                 android.util.Log.e("THOR_WEB_SEARCH", "Web search failed", error)
                 addMessage("THOR", "Web search failed: " + (error.message ?: error.javaClass.simpleName) + ". Opening the search in your browser.")
-                launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query) + "&kp=1)), "Opening web search.")
+                launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query) + "&kp=1")), "Opening web search.")
             }
         }
     }
