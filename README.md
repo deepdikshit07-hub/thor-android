@@ -81,7 +81,7 @@ Before publishing the first OTA release:
 
 The release workflow also uploads the signed production APK and `latest.json` to that run's **Artifacts** section for 90 days. Distribute the signed release APK from the `Publish THOR OTA Release` workflow—not the debug APK. The debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
 
-The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release. Workflow builds use the repository-wide GitHub run ID as their version code so later workflow APKs have a higher version code.
+The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release. Workflow builds derive their version code from the repository-wide GitHub run ID, bounded below Android's maximum supported version code; this keeps release versions ahead of earlier workflow builds.
 
 ## Device notes
 - `minSdk 24` supports older Android releases; the app should run on Android 10/11 and newer.
