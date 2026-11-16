@@ -1580,7 +1580,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         fun refreshChatGPTStatus() {
             val status = chatgpt.status()
             accountStatus.text = if (status.connected && status.planUsageEnabled) {
-                "ChatGPT account connected: \${status.email.ifBlank { "account verified" }}\nPlan usage permission is active."
+                "ChatGPT account connected: ${status.email.ifBlank { "account verified" }}\nPlan usage permission is active."
             } else if (status.connected) {
                 "ChatGPT identity connected, but plan usage permission is not active."
             } else {
@@ -1600,7 +1600,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                         refreshChatGPTStatus()
                         Toast.makeText(this@MainActivity, if (result.planUsageEnabled) "ChatGPT account connected." else "ChatGPT connected without plan usage permission.", Toast.LENGTH_LONG).show()
                     } catch (error: Exception) {
-                        Toast.makeText(this@MainActivity, "ChatGPT sign-in failed: \${error.message ?: "please retry"}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@MainActivity, "ChatGPT sign-in failed: ${error.message ?: "please retry"}", Toast.LENGTH_LONG).show()
                     } finally {
                         isEnabled = true
                         text = if (chatgpt.status().connected) "RECONNECT CHATGPT ACCOUNT" else "CONTINUE WITH CHATGPT"
@@ -1737,6 +1737,7 @@ lower.startsWith("অ্যালার্ম ") -> {
     private fun askGemini(prompt: String) {
         if (activeAiReply) { addMessage("THOR", "One moment — I'm still finishing the previous answer."); return }
         val providerManager = ThorAiProviderManager(this)
+        val chatgpt = ThorChatGPTAccountManager(this)
         val selectedSettings = providerManager.settings()
         val selectedProvider = selectedSettings.provider
         if (selectedProvider == ThorAiProviderManager.Provider.LOCAL) { askLocalOrFallback(prompt); return }
@@ -1757,7 +1758,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     streamed.append(token)
                     runOnUiThread { if (!isFinishing && !isDestroyed) chat.append(token) }
                 }
-                val providerTitle: String
+                var providerTitle: String
                 when (selectedProvider) {
                     ThorAiProviderManager.Provider.AUTO -> {
                         val result = providerManager.streamAutomatically(styleInstruction,
