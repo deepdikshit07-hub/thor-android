@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "test": "node --test",
     "db:create": "wrangler d1 create thor-master-approval",
-    "db:migrate:remote": "wrangler d1 execute thor-master-approval --remote --file=./schema.sql"
+    "db:migrate:remote": "wrangler d1 execute thor-master-approval --remote --file=./schema.sql",
+    "build": "node --check src/index.js"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
