@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Bidirectional Gemini Live audio session.
  *
- * Audio is streamed as 20 ms PCM16 mono chunks (16 kHz) and native model audio
+ * Audio is streamed as 100 ms PCM16 mono chunks (16 kHz) and native model audio
  * is played as PCM16 mono (24 kHz). Nothing is written to chat storage.
  */
 class ThorLiveSession(
@@ -119,7 +119,7 @@ class ThorLiveSession(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    android.util.Log.d("THOR_LIVE", "Gemini Live server frame received (0 chars)")
+                    android.util.Log.d("THOR_LIVE", "Gemini Live server frame received (${text.length} chars)")
                     handleServerMessage(text, ready)
                 }
 
