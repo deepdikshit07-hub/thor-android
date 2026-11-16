@@ -1525,6 +1525,7 @@ lower.startsWith("অ্যালার্ম ") -> {
 
     private fun showAiProviderSettings() {
         val manager = ThorAiProviderManager(this)
+        val chatgpt = ThorChatGPTAccountManager(this)
         val current = manager.settings()
         val providers = ThorAiProviderManager.Provider.values()
         val panel = LinearLayout(this).apply {
@@ -1557,7 +1558,96 @@ lower.startsWith("অ্যালার্ম ") -> {
 
         panel.addView(TextView(this).apply { text = "AI provider"; textSize = 13f })
         panel.addView(providerSpinner, matchWrap())
-        val modelField = field("Model ID", current.model, "Enter the model identifier")
+        val modelField = field("Model ID", current.model, "Choose a model below or enter its exact ID")
+        panel.addView(TextView(this).apply {
+            text = "AVAILABLE MODELS"
+            textSize = 12f
+            setTextColor(accentColor())
+            setPadding(0, 10, 0, 3)
+        })
+        val modelSpinner = Spinner(this)
+        val modelAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, mutableListOf("Select a model"))
+        modelSpinner.adapter = modelAdapter
+        var modelChoices: List<Pair<String, String>> = emptyList()
+        fun applyModelChoices(choices: List<Pair<String, String>>, selectedModel: String) {
+            modelChoices = choices
+            val selected = choices.indexOfFirst { it.second == selectedModel }
+            modelAdapter.clear()
+            modelAdapter.add("Select a model")
+            choices.forEach { modelAdapter.add(it.first) }
+            modelAdapter.notifyDataSetChanged()
+            modelSpinner.setSelection(if (selected >= 0) selected + 1 else 0)
+            modelSpinner.isEnabled = choices.isNotEmpty()
+        }
+        fun updateModelChoices(provider: ThorAiProviderManager.Provider, selectedModel: String) {
+            val suggestions = when (provider) {
+                ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> emptyList()
+                ThorAiProviderManager.Provider.GEMINI,
+                ThorAiProviderManager.Provider.GEMINI_API -> listOf(
+                    "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.GROQ -> listOf(
+                    "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.CLAUDE -> listOf(
+                    "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.OPENAI -> listOf(
+                    "gpt-6.1-sol", "gpt-5.6-sol", "gpt-4o-mini"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.OPENROUTER -> listOf(
+                    "openai/gpt-5.6-sol", "google/gemini-3.8-flash",
+                    "anthropic/claude-sonnet-5-5", "deepseek/deepseek-v4-pro",
+                    "meta-llama/llama-3.3-70b-instruct:free"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.DEEPSEEK -> listOf("deepseek-flash", "deepseek-v4-pro").map { it to it }
+                ThorAiProviderManager.Provider.MISTRAL -> listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest").map { it to it }
+                ThorAiProviderManager.Provider.CLOUDFLARE -> listOf(
+                    "@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.CUSTOM -> emptyList()
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL -> emptyList()
+            }
+            val withSaved = if (selectedModel.isNotBlank() && suggestions.none { it.second == selectedModel }) {
+                listOf("Current/custom: $selectedModel" to selectedModel) + suggestions
+            } else suggestions
+            if (provider != ThorAiProviderManager.Provider.CHATGPT_ACCOUNT) {
+                applyModelChoices(withSaved, selectedModel)
+                return
+            }
+            if (!chatgpt.status().planUsageEnabled) {
+                applyModelChoices(withSaved, selectedModel)
+                return
+            }
+            modelAdapter.clear()
+            modelAdapter.add("Loading models from your ChatGPT account…")
+            modelAdapter.notifyDataSetChanged()
+            modelSpinner.isEnabled = false
+            mainScope.launch {
+                try {
+                    val accountModels = chatgpt.listModels().map { it.displayName to it.slug }
+                    val allModels = if (selectedModel.isNotBlank() && accountModels.none { it.second == selectedModel }) {
+                        listOf("Current/custom: $selectedModel" to selectedModel) + accountModels
+                    } else accountModels
+                    applyModelChoices(allModels, selectedModel)
+                    if (allModels.isEmpty()) modelAdapter.add("No models available for this account")
+                } catch (error: Exception) {
+                    applyModelChoices(withSaved, selectedModel)
+                    Toast.makeText(this@MainActivity, "Could not load ChatGPT models: ${error.message ?: "try reconnecting"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        panel.addView(modelSpinner, matchWrap())
+        modelSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                if (position > 0 && position - 1 in modelChoices.indices) {
+                    modelField.setText(modelChoices[position - 1].second)
+                }
+            }
+        }
+        updateModelChoices(current.provider, current.model)
         val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions endpoint")
         val keyField = field(
             "API key",
@@ -1571,7 +1661,6 @@ lower.startsWith("অ্যালার্ম ") -> {
             setTextColor(Color.LTGRAY)
             setPadding(0, 12, 0, 4)
         }, matchWrap())
-        val chatgpt = ThorChatGPTAccountManager(this)
         val accountStatus = TextView(this).apply {
             textSize = 12f
             setTextColor(Color.LTGRAY)
@@ -1651,18 +1740,32 @@ lower.startsWith("অ্যালার্ম ") -> {
                 text = "TESTING..."
                 mainScope.launch {
                     try {
-                        if (providers[providerSpinner.selectedItemPosition] == ThorAiProviderManager.Provider.CHATGPT_ACCOUNT) {
-                            if (!chatgpt.status().planUsageEnabled) error("Connect an eligible ChatGPT account first. The no-key Gemini fallback is available for free-tier use.")
-                            chatgpt.streamResponse("Reply with only the word OK.", onChunk = {})
-                            Toast.makeText(this@MainActivity, "ChatGPT account connection verified.", Toast.LENGTH_LONG).show()
-                            return@launch
-                        }
-                        val result = manager.streamAutomatically("Reply with only the word OK.",
-                            geminiFirebase = { emit ->
+                        val selected = providers[providerSpinner.selectedItemPosition]
+                        when (selected) {
+                            ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> {
+                                if (!chatgpt.status().planUsageEnabled) error("Connect an eligible ChatGPT account first.")
+                                chatgpt.streamResponse("Reply with only the word OK.", modelField.text.toString(), onChunk = {})
+                                Toast.makeText(this@MainActivity, "ChatGPT model verified: ${modelField.text}", Toast.LENGTH_LONG).show()
+                            }
+                            ThorAiProviderManager.Provider.GEMINI -> {
                                 if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
-                                GeminiAssistant.stream("Reply with only the word OK.", manager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
-                            },
-                            onChunk = {})
+                                GeminiAssistant.stream("Reply with only the word OK.", modelField.text.toString(), {})
+                                Toast.makeText(this@MainActivity, "Gemini model verified: ${modelField.text}", Toast.LENGTH_LONG).show()
+                            }
+                            ThorAiProviderManager.Provider.AUTO -> {
+                                val result = manager.streamAutomatically("Reply with only the word OK.",
+                                    geminiFirebase = { emit ->
+                                        if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
+                                        GeminiAssistant.stream("Reply with only the word OK.", manager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
+                                    }, onChunk = {})
+                                Toast.makeText(this@MainActivity, "Automatic route verified: " + result.provider.title, Toast.LENGTH_LONG).show()
+                            }
+                            ThorAiProviderManager.Provider.LOCAL -> error("On-device AI does not use an online connection test.")
+                            else -> {
+                                manager.stream(selected, "Reply with only the word OK.", {}, maxTokens = 64)
+                                Toast.makeText(this@MainActivity, "Model verified: ${selected.title} / ${modelField.text}", Toast.LENGTH_LONG).show()
+                            }
+                        }
                         Toast.makeText(this@MainActivity, "Online AI verified: " + result.provider.title, Toast.LENGTH_LONG).show()
                     } catch (error: Exception) {
                         Toast.makeText(this@MainActivity, "Online test failed: " + (error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
@@ -1681,7 +1784,10 @@ lower.startsWith("অ্যালার্ম ") -> {
                 ThorAiProviderManager.Provider.LOCAL
             )
             modelField.isEnabled = provider !in listOf(
-                ThorAiProviderManager.Provider.CHATGPT_ACCOUNT,
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
+            modelSpinner.isEnabled = modelChoices.isNotEmpty() && provider !in listOf(
                 ThorAiProviderManager.Provider.AUTO,
                 ThorAiProviderManager.Provider.LOCAL
             )
@@ -1701,6 +1807,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                 if (selected != previousProvider) {
                     val saved = manager.settings(selected)
                     modelField.setText(saved.model)
+                    updateModelChoices(selected, saved.model)
                     endpointField.setText(saved.endpoint)
                     keyField.setText("")
                     keyField.hint = if (saved.apiKey.isNotBlank()) {
@@ -1785,7 +1892,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> {
                         try {
                             if (!chatgpt.status().planUsageEnabled) error("No ChatGPT plan connection is active.")
-                            chatgpt.streamResponse(styleInstruction, onChunk = onToken)
+                            chatgpt.streamResponse(styleInstruction, selectedSettings.model, onToken)
                             providerTitle = "ChatGPT account"
                         } catch (accountError: Exception) {
                             if (accountError is CancellationException) throw accountError
