@@ -136,10 +136,29 @@ class ThorAiProviderManager(private val context: Context) {
      * potentially metered providers out until the user explicitly opts in.
      * OpenRouter's explicitly free model IDs are safe to try without that opt-in.
      */
+    private fun isCoolingDown(provider: Provider): Boolean =
+        System.currentTimeMillis() < prefs.getLong("cooldown_until_${provider.name}", 0L)
+
+    private fun recordProviderFailure(provider: Provider, error: Throwable) {
+        val message = generateSequence(error) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+            .lowercase()
+        // Quota exhaustion is generally a daily limit, not a transient network
+        // error. Avoid hammering the same exhausted endpoint on every chat turn.
+        if (message.contains("quota") || message.contains("resource_exhausted") ||
+            message.contains("rate limit") || message.contains("http 429") ||
+            message.contains("too many requests")) {
+            prefs.edit().putLong("cooldown_until_${provider.name}",
+                System.currentTimeMillis() + 24L * 60L * 60L * 1000L).apply()
+        }
+    }
+
     private fun automaticCandidates(): List<Provider> {
-        val candidates = mutableListOf(Provider.GEMINI)
+        val candidates = mutableListOf<Provider>()
+        if (!isCoolingDown(Provider.GEMINI)) candidates += Provider.GEMINI
         fun addConfigured(provider: Provider) {
-            if (settings(provider).apiKey.isNotBlank() && provider !in candidates) {
+            if (!isCoolingDown(provider) && settings(provider).apiKey.isNotBlank() && provider !in candidates) {
                 candidates += provider
             }
         }
@@ -148,7 +167,7 @@ class ThorAiProviderManager(private val context: Context) {
         addConfigured(Provider.GEMINI_API)
 
         val openRouter = settings(Provider.OPENROUTER)
-        if (openRouter.apiKey.isNotBlank() &&
+        if (!isCoolingDown(Provider.OPENROUTER) && openRouter.apiKey.isNotBlank() &&
             (allowMeteredAutoProviders() || openRouter.model.endsWith(":free", ignoreCase = true))
         ) {
             candidates += Provider.OPENROUTER
@@ -194,6 +213,7 @@ class ThorAiProviderManager(private val context: Context) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.w("THOR_AI_PROVIDER", "Automatic route ${provider.name} failed", error)
+                recordProviderFailure(provider, error)
                 failures += "${provider.title}: ${error.message ?: error.javaClass.simpleName}"
             }
         }
@@ -273,11 +293,18 @@ class ThorAiProviderManager(private val context: Context) {
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 Log.w("THOR_AI_PROVIDER", "Streaming route failed: " + provider.name, error)
+                recordProviderFailure(provider, error)
                 if (received.isNotEmpty()) throw IllegalStateException(provider.title + " stopped after a partial response. Retry the question.", error)
                 failures += provider.title + ": " + (error.message ?: error.javaClass.simpleName)
             }
         }
-        throw IllegalStateException(if (failures.isEmpty()) "No online AI provider is configured. Add a Gemini or Groq API key." else "All configured online providers failed. " + failures.takeLast(4).joinToString("; "))
+        throw IllegalStateException(
+            if (failures.isEmpty()) {
+                "No usable online provider is available. Gemini may be in its 24-hour quota cooldown; add a valid Groq, Gemini API, or OpenRouter key in AI Provider settings."
+            } else {
+                "All configured online providers failed. " + failures.takeLast(4).joinToString("; ")
+            }
+        )
     }
 
     suspend fun ask(prompt: String, maxTokens: Int = 192): String =
