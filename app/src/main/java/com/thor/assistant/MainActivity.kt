@@ -1593,7 +1593,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                     "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"
                 ).map { it to it }
                 ThorAiProviderManager.Provider.OPENAI -> listOf(
-                    "gpt-6.1-sol", "gpt-5.6-sol", "gpt-4o-mini"
+                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini"
                 ).map { it to it }
                 ThorAiProviderManager.Provider.OPENROUTER -> listOf(
                     "openai/gpt-5.6-sol", "google/gemini-3.8-flash",
