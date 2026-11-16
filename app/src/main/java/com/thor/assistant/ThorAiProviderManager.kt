@@ -61,11 +61,21 @@ class ThorAiProviderManager(private val context: Context) {
                 .putBoolean("auto_provider_migration_v1", true)
                 .apply()
         }
-        if (!prefs.getBoolean("chatgpt_account_default_v1", false)) {
-            if (prefs.getString("provider", Provider.AUTO.name) == Provider.AUTO.name) {
-                prefs.edit().putString("provider", Provider.CHATGPT_ACCOUNT.name).apply()
+        // ChatGPT account access is optional and must never become the default
+        // for a fresh install. Older builds silently selected it before the user
+        // connected an account, which made the first chat appear to hang/fallback.
+        // Move unconnected installs to AUTO once; users can still select ChatGPT
+        // explicitly after authorizing plan usage.
+        if (!prefs.getBoolean("provider_auto_default_v2", false)) {
+            val accountPrefs = context.getSharedPreferences("thor_chatgpt_account", Context.MODE_PRIVATE)
+            val grantedScopes = accountPrefs.getString("scope", "").orEmpty().split(' ').toSet()
+            val planUsageReady = grantedScopes.contains("resource.invoke") &&
+                grantedScopes.contains("chatgpt.tokens.use.direct") &&
+                !decrypt(accountPrefs.getString("access_token", null)).isNullOrBlank()
+            if (prefs.getString("provider", Provider.AUTO.name) == Provider.CHATGPT_ACCOUNT.name && !planUsageReady) {
+                prefs.edit().putString("provider", Provider.AUTO.name).apply()
             }
-            prefs.edit().putBoolean("chatgpt_account_default_v1", true).apply()
+            prefs.edit().putBoolean("provider_auto_default_v2", true).apply()
         }
     }
 
@@ -78,7 +88,7 @@ class ThorAiProviderManager(private val context: Context) {
 
     fun settings(forProvider: Provider? = null): Settings {
         val provider = forProvider ?: runCatching {
-            Provider.valueOf(prefs.getString("provider", Provider.CHATGPT_ACCOUNT.name) ?: Provider.CHATGPT_ACCOUNT.name)
+            Provider.valueOf(prefs.getString("provider", Provider.AUTO.name) ?: Provider.AUTO.name)
         }.getOrDefault(Provider.CHATGPT_ACCOUNT)
         val suffix = provider.name
         val savedModel = prefs.getString("model_$suffix", null)
