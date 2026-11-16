@@ -1732,7 +1732,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             } else if (status.connected) {
                 "ChatGPT identity connected, but plan usage permission is not active."
             } else {
-                "ChatGPT is optional and is not connected. Automatic mode will try Firebase Gemini first, then any provider keys you have configured. Register the Firebase App Check debug token for sideloaded debug builds."
+                "ChatGPT is optional and is not connected. Automatic mode tries Firebase Gemini first, then configured provider keys. Firebase AI Logic must be enabled in your Firebase project; register the App Check debug token for sideloaded debug builds."
             }
         }
         refreshChatGPTStatus()
