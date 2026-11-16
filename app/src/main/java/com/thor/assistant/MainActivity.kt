@@ -1612,10 +1612,19 @@ lower.startsWith("অ্যালার্ম ") -> {
         val disconnectChatGPT = Button(this).apply {
             text = "DISCONNECT CHATGPT ACCOUNT"
             setOnClickListener {
-                chatgpt.disconnect()
-                refreshChatGPTStatus()
-                connectChatGPT.text = "CONTINUE WITH CHATGPT"
-                Toast.makeText(this@MainActivity, "ChatGPT account disconnected from THOR.", Toast.LENGTH_SHORT).show()
+                isEnabled = false
+                mainScope.launch {
+                    val revoked = chatgpt.disconnect()
+                    refreshChatGPTStatus()
+                    connectChatGPT.text = "CONTINUE WITH CHATGPT"
+                    isEnabled = true
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (revoked) "ChatGPT account disconnected and session revoked."
+                        else "Disconnected locally. Remote revocation could not be confirmed; you can also remove THOR in ChatGPT settings.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
         panel.addView(disconnectChatGPT, matchWrap())
