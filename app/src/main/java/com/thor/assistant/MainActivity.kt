@@ -1590,7 +1590,11 @@ lower.startsWith("অ্যালার্ম ") -> {
         refreshChatGPTStatus()
         panel.addView(accountStatus, matchWrap())
         val connectChatGPT = Button(this).apply {
-            text = if (chatgpt.status().connected) "RECONNECT CHATGPT ACCOUNT" else "CONTINUE WITH CHATGPT"
+            text = when {
+                chatgpt.status().connected && !chatgpt.status().planUsageEnabled -> "ENABLE CHATGPT PLAN USAGE"
+                chatgpt.status().connected -> "RECONNECT CHATGPT ACCOUNT"
+                else -> "CONTINUE WITH CHATGPT"
+            }
             setOnClickListener {
                 isEnabled = false
                 text = "OPENING CHATGPT..."
@@ -1603,7 +1607,11 @@ lower.startsWith("অ্যালার্ম ") -> {
                         Toast.makeText(this@MainActivity, "ChatGPT sign-in failed: ${error.message ?: "please retry"}", Toast.LENGTH_LONG).show()
                     } finally {
                         isEnabled = true
-                        text = if (chatgpt.status().connected) "RECONNECT CHATGPT ACCOUNT" else "CONTINUE WITH CHATGPT"
+                        text = when {
+                chatgpt.status().connected && !chatgpt.status().planUsageEnabled -> "ENABLE CHATGPT PLAN USAGE"
+                chatgpt.status().connected -> "RECONNECT CHATGPT ACCOUNT"
+                else -> "CONTINUE WITH CHATGPT"
+            }
                     }
                 }
             }
