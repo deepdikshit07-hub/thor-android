@@ -58,7 +58,6 @@ jobs:
           done
           exit 1
 
-      # The offline model is downloaded on demand into private app storage.
       - name: Build lightweight debug APK
         shell: bash
         run: |
