@@ -37,8 +37,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Bidirectional Gemini Live audio session.
  *
- * Audio is streamed as 20 ms PCM16 mono chunks (16 kHz) and native model audio
- * is played as PCM16 mono (24 kHz). Nothing is written to chat storage.
+ * Audio is streamed as 100 ms PCM16 mono chunks (16 kHz) and native model audio
+ * is played as PCM16 mono (24 kHz). Authentication uses a single-use server token;
+ * the permanent Gemini API key is never sent to or stored in the app.
  */
 class ThorLiveSession(
     context: Context,
@@ -82,8 +83,7 @@ class ThorLiveSession(
         stopped.set(false)
         notifyState(State.CONNECTING, "SECURING LIVE CONNECTION")
         try {
-            // Use the same Gemini API key already saved in AI Provider settings.
-            // Google documents API-key authentication for direct Live WebSocket clients.
+            // The short-lived token is constrained to this model and audio configuration by THOR Worker.
             if (stopped.get()) return
             val ready = CompletableDeferred<Unit>()
             val request = Request.Builder()
@@ -119,7 +119,7 @@ class ThorLiveSession(
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
-                    android.util.Log.d("THOR_LIVE", "Gemini Live server frame received (0 chars)")
+                    android.util.Log.d("THOR_LIVE", "Gemini Live server frame received (${text.length} chars)")
                     handleServerMessage(text, ready)
                 }
 
@@ -146,7 +146,7 @@ class ThorLiveSession(
             startAudio()
             notifyState(State.LISTENING, "LISTENING")
         } catch (error: kotlinx.coroutines.TimeoutCancellationException) {
-            val detail = "Gemini did not confirm the Live session setup within 15 seconds. Check that the phone has a stable internet connection and that this Gemini API key has Live API access. The app will not keep waiting."
+            val detail = "Gemini did not confirm the Live session setup within 15 seconds. Check the phone connection and confirm that THOR’s server-side Gemini project has Live API access. The app will not keep waiting."
             android.util.Log.e("THOR_LIVE", "Live session startup timed out: $detail", error)
             fail(detail)
             throw IllegalStateException(detail, error)
