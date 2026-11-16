@@ -1,18 +1,23 @@
-
 name: Build THOR APK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - thor-2.0-upgrade
+      - "**"
   pull_request:
     branches:
       - main
+      - feature/thor-ota-updates
 
 permissions:
   contents: read
+
+# PR and push events for the same branch share one build slot. This avoids
+# duplicate Gradle downloads and reduces transient Maven Central rate limits.
+concurrency:
+  group: thor-android-build-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -41,16 +46,39 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Download bundled offline AI model
+      - name: Run Android lint and unit tests
+        shell: bash
         run: |
-          mkdir -p app/src/main/assets
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm?download=true" \
-            -o app/src/main/assets/Qwen3-0.6B.litertlm
-          test "$(stat -c%s app/src/main/assets/Qwen3-0.6B.litertlm)" -gt 100000000
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:lintDebug :app:testDebugUnitTest; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle dependency/build attempt $attempt failed; retrying after backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
-      - name: Build debug APK with bundled offline AI
-        run: gradle --no-daemon :app:assembleDebug
+      # The 586 MB LiteRT model is intentionally NOT bundled into the APK.
+      # ThorOfflineAi already downloads it on demand into private app storage.
+      - name: Build lightweight debug APK
+        run: |
+          VERSION_CODE="$((GITHUB_RUN_ID % 2000000000))"
+          if [ "$VERSION_CODE" -lt 1 ]; then VERSION_CODE=1; fi
+          VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:assembleDebug \
+              -PthorVersionCode="$VERSION_CODE" \
+              -PthorVersionName="$VERSION_NAME"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle APK build attempt $attempt failed; retrying after backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -58,5 +86,4 @@ jobs:
           name: THOR-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 7
-          
+          retention-days: 30
