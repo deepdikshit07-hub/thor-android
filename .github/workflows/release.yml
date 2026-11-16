@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write
 
+# A single publisher prevents two runs racing to publish the same latest release.
+concurrency:
+  group: thor-ota-release
+  cancel-in-progress: false
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -34,7 +39,19 @@ jobs:
         with:
           gradle-version: "8.13"
       - name: Compile debug APK before publishing
-        run: gradle --no-daemon :app:assembleDebug
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:assembleDebug; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Debug validation attempt $attempt failed; retrying after dependency-service backoff."
+              sleep $((attempt * 30))
+            fi
+          done
+          echo "::error::Debug APK validation failed after three attempts."
+          exit 1
 
   release:
     needs: validate
@@ -77,11 +94,13 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Decode release keystore
+      - name: Decode and validate release keystore
         shell: bash
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/thor-release.jks"
           test -s "$RUNNER_TEMP/thor-release.jks"
+          keytool -list -keystore "$RUNNER_TEMP/thor-release.jks" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null
 
       - name: Build signed release APK
         id: build
@@ -94,19 +113,35 @@ jobs:
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          gradle --no-daemon :app:assembleRelease \
-            -PthorVersionCode="$VERSION_CODE" \
-            -PthorVersionName="$VERSION_NAME" \
-            -PthorKeystorePath="$RUNNER_TEMP/thor-release.jks" \
-            -PthorStorePassword="$ANDROID_KEYSTORE_PASSWORD" \
-            -PthorKeyAlias="$ANDROID_KEY_ALIAS" \
-            -PthorKeyPassword="$ANDROID_KEY_PASSWORD"
+
+          built=false
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:assembleRelease \
+              -PthorVersionCode="$VERSION_CODE" \
+              -PthorVersionName="$VERSION_NAME" \
+              -PthorKeystorePath="$RUNNER_TEMP/thor-release.jks" \
+              -PthorStorePassword="$ANDROID_KEYSTORE_PASSWORD" \
+              -PthorKeyAlias="$ANDROID_KEY_ALIAS" \
+              -PthorKeyPassword="$ANDROID_KEY_PASSWORD"; then
+              built=true
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Release build attempt $attempt failed; retrying after dependency-service backoff."
+              sleep $((attempt * 30))
+            fi
+          done
+          test "$built" = true || { echo "::error::Signed release build failed after three attempts."; exit 1; }
+
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+
           mkdir -p release-assets
-          cp app/build/outputs/apk/release/app-release.apk release-assets/thor-release.apk
+          cp "$APK" release-assets/thor-release.apk
           SHA256="$(sha256sum release-assets/thor-release.apk | awk '{print $1}')"
-          TAG_NAME="v${VERSION_NAME}"
           APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/thor-release.apk"
-          export VERSION_NAME VERSION_CODE SHA256 APK_URL
+          export VERSION_NAME VERSION_CODE SHA256 APK_URL TAG_NAME
           python3 - <<'PY'
           import json, os
           manifest = {
@@ -117,6 +152,9 @@ jobs:
               "mandatory": False,
               "releaseNotes": "THOR improvements and fixes"
           }
+          assert manifest["versionCode"] > 0
+          assert len(manifest["sha256"]) == 64
+          assert manifest["apkUrl"].endswith("/thor-release.apk")
           with open("release-assets/latest.json", "w", encoding="utf-8") as f:
               json.dump(manifest, f, ensure_ascii=False, indent=2)
           PY
@@ -130,6 +168,34 @@ jobs:
           files: |
             release-assets/thor-release.apk
             release-assets/latest.json
+
+      - name: Verify public OTA manifest and APK endpoints
+        shell: bash
+        run: |
+          MANIFEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json"
+          curl --fail --silent --show-error --location --retry 10 --retry-all-errors --retry-delay 5 \
+            "$MANIFEST_URL" -o "$RUNNER_TEMP/latest.json"
+          python3 - "$RUNNER_TEMP/latest.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as f:
+              data = json.load(f)
+          required = ("versionCode", "versionName", "apkUrl", "sha256")
+          missing = [key for key in required if key not in data]
+          if missing:
+              raise SystemExit("Published manifest is missing: " + ", ".join(missing))
+          if not isinstance(data["versionCode"], int) or data["versionCode"] <= 0:
+              raise SystemExit("Published manifest versionCode is invalid")
+          if len(data["sha256"]) != 64:
+              raise SystemExit("Published manifest SHA-256 is invalid")
+          if not data["apkUrl"].endswith("/thor-release.apk"):
+              raise SystemExit("Published APK URL is invalid")
+          print("Published THOR OTA manifest is valid for", data["versionName"])
+          PY
+          APK_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["apkUrl"])' "$RUNNER_TEMP/latest.json")"
+          curl --fail --silent --show-error --location --retry 10 --retry-all-errors --retry-delay 5 \
+            "$APK_URL" -o /dev/null
+          echo "Public THOR OTA manifest and APK are reachable."
+      
       - name: Upload signed APK to Actions artifacts
         uses: actions/upload-artifact@v4
         with:
