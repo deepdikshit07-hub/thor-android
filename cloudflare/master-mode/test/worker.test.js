@@ -195,7 +195,7 @@ test("Gemini Live token route returns a constrained short-lived token", async ()
     if (String(url).includes("identitytoolkit.googleapis.com")) {
       return new Response(JSON.stringify({ users: [{ localId: "requester-uid" }] }), { status: 200 });
     }
-    assert.match(String(url), /generativelanguage\.googleapis\.com\/v1alpha\/auth_tokens/);
+    assert.match(String(url), /generativelanguage\.googleapis\.com\/v1beta\/auth_tokens/);
     assert.equal(options.headers["x-goog-api-key"], "server-only-test-key");
     const requestBody = JSON.parse(options.body);
     assert.equal(requestBody.uses, 1);
