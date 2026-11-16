@@ -12,6 +12,8 @@ import android.speech.SpeechRecognizer
 import android.os.Handler
 import android.os.Looper
 import android.content.pm.ApplicationInfo
+import android.content.pm.ResolveInfo
+import android.view.View
 import com.google.firebase.Firebase
 import com.google.firebase.initialize
 import com.google.firebase.appcheck.appCheck
@@ -73,10 +75,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var wakeEnabled = false
     private var waitingForWakeCommand = false
     private var wakeButton: Button? = null
+    private var chatScroll: ScrollView? = null
+    private var titleAnimator: ObjectAnimator? = null
+    // Last values pushed to the TTS engine, so speak() does not reconfigure it every time.
+    private var appliedTtsLanguage = -1
+    private var appliedVoiceStyle = -1
 
     private val languages = listOf("English", "Hindi", "Bengali")
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
     private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
+
+    private companion object {
+        // Keep the chat view small so appending stays fast on long sessions.
+        const val MAX_CHAT_CHARS = 24_000
+        const val TRIM_TO_CHARS = 14_000
+        val TIME_WORD = Regex("""\btime\b""")
+        val DATE_WORD = Regex("""\bdate\b""")
+        val ACTION_VERBS = listOf(
+            "play ", "search ", "google ", "open ", "launch ", "call ", "dial ",
+            "sms ", "message ", "remind ", "reminder ", "alarm ", "set alarm ",
+            "मुझे याद ", "মনে করিয়ে ", "खोज ", "সার্চ ", "कॉल ", "কল ",
+            "बजाओ ", "গান ", "खोलो ", "খোলো ", "अलार्म ", "অ্যালার্ম "
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,9 +105,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
+        // The screen must exist before anything can call addMessage(), including the
+        // Firebase error path, otherwise a failed init crashes on the missing chat view.
+        buildScreen()
         initializeFirebase()
         tts = TextToSpeech(this, this)
-        buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
@@ -225,7 +248,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(Color.rgb(75, 210, 255))
         }
         root.addView(title, matchWrap())
-        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
+        titleAnimator = ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
             duration = 1500
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
@@ -283,6 +306,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
 
         val scroll = ScrollView(this)
+        chatScroll = scroll
         chat = TextView(this).apply {
             textSize = 15f
             setTextColor(Color.rgb(225, 235, 245))
@@ -382,7 +406,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private fun askLocalOrFallback(prompt: String) {
         if (!offlineAi.isModelInstalled() && !offlineAi.hasBundledModel()) {
             val fallback = offlineReply(prompt) +
-                "\\n\\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
+                "\n\nInstall the offline AI model using the button near the top of THOR to enable open-ended offline chat."
             addMessage("THOR", fallback)
             speak(fallback)
             return
@@ -439,6 +463,9 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         addMessage("YOU", raw)
         val command = raw.trim()
         val lower = command.lowercase(Locale.ROOT)
+        // Commands that start with an action verb must never be hijacked by the
+        // "what time / date is it" shortcuts below (e.g. "play time of my life").
+        val startsWithActionVerb = ACTION_VERBS.any { lower.startsWith(it) }
 
         when {
             learningMemory.parseTeaching(command)?.let { learned ->
@@ -449,7 +476,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             lower in listOf("what have you learned", "show learned memory", "show what you learned", "তুমি কী শিখেছ", "क्या सीखा") -> {
                 val entries = learningMemory.all()
                 addMessage("THOR", if (entries.isEmpty()) "I haven't saved any lessons yet." else
-                    entries.mapIndexed { index, entry -> "${index + 1}. ${entry.first} — ${entry.second}" }.joinToString("\\n"))
+                    entries.mapIndexed { index, entry -> "${index + 1}. ${entry.first} — ${entry.second}" }.joinToString("\n"))
             }
 
             lower.startsWith("forget learning ") -> {
@@ -517,12 +544,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 } else addMessage("THOR", "Use 'done 1' with a valid task number.")
             }
 
-            lower.contains("time") || lower.contains("समय") || lower.contains("সময়") -> {
+            !startsWithActionVerb &&
+                (TIME_WORD.containsMatchIn(lower) || lower.contains("समय") || lower.contains("সময়")) -> {
                 val time = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
                 respond("The time is $time.", "समय $time है।", "এখন সময় $time।")
             }
 
-            lower.contains("date") || lower.contains("तारीख") || lower.contains("তারিখ") -> {
+            !startsWithActionVerb &&
+                (DATE_WORD.containsMatchIn(lower) || lower.contains("तारीख") || lower.contains("তারিখ")) -> {
                 val date = SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date())
                 respond("Today's date is $date.", "आज की तारीख $date है।", "আজকের তারিখ $date।")
             }
@@ -591,15 +620,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 lower == "গান চালাও" || lower == "म्यूजिक चलाओ" -> {
                 val candidates = listOf("YouTube Music", "Spotify", "Music")
                 val opened = candidates.any { candidate ->
-                    val wanted = candidate.lowercase(Locale.ROOT)
-                    val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                    val match = packageManager.queryIntentActivities(launcher, 0).firstOrNull {
-                        it.loadLabel(packageManager).toString().lowercase(Locale.ROOT).contains(wanted)
-                    }
+                    val match = findLaunchableApp(candidate)
                     val launch = match?.let {
                         packageManager.getLaunchIntentForPackage(it.activityInfo.packageName)
                     }
-                    if (launch != null) {
+                    if (match != null && launch != null) {
                         launchIntent(launch, "Opening ${match.loadLabel(packageManager)}.")
                         true
                     } else false
@@ -825,6 +850,10 @@ lower.startsWith("অ্যালার্ম ") -> {
             }
             Firebase.appCheck.installAppCheckProviderFactory(providerFactory)
             firebaseReady = true
+            // Build the Gemini client in the background so the first online answer starts faster.
+            mainScope.launch(Dispatchers.Default) {
+                try { GeminiAssistant.warmUp() } catch (_: Exception) {}
+            }
         } catch (error: Exception) {
             firebaseReady = false
             addMessage("THOR", "Firebase setup needs attention: ${error.message ?: "initialization failed"}")
@@ -944,14 +973,7 @@ lower.startsWith("অ্যালার্ম ") -> {
     }
 
     private fun openAppAndControlMedia(requestedName: String, action: String) {
-        val wanted = requestedName.lowercase(Locale.ROOT)
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val matches = packageManager.queryIntentActivities(launcherIntent, 0)
-        val match = matches.firstOrNull {
-            it.loadLabel(packageManager).toString().trim().equals(wanted, ignoreCase = true)
-        } ?: matches.firstOrNull {
-            it.loadLabel(packageManager).toString().lowercase(Locale.ROOT).contains(wanted)
-        }
+        val match = findLaunchableApp(requestedName, exactFirst = true)
         if (match == null) {
             val message = "I couldn't find $requestedName on this phone."
             addMessage("THOR", message)
@@ -974,8 +996,7 @@ lower.startsWith("অ্যালার্ম ") -> {
             // Give the player time to open and publish its media session.
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isFinishing && !isDestroyed) {
-                    val key = if (action == "resume") KeyEvent.KEYCODE_MEDIA_PLAY else KeyEvent.KEYCODE_MEDIA_PLAY
-                    sendMediaKey(key, "Sent a play command to the active media player.")
+                    sendMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY, "Sent a play command to the active media player.")
                 }
             }, 1400L)
         } catch (error: Exception) {
@@ -985,13 +1006,34 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
-    private fun openInstalledApp(requestedName: String) {
-        val wanted = requestedName.lowercase(Locale.ROOT)
-        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val matches = packageManager.queryIntentActivities(launcherIntent, 0)
-        val match = matches.firstOrNull {
-            it.loadLabel(packageManager).toString().lowercase(Locale.ROOT).contains(wanted)
+    /**
+     * Installed launcher apps, looked up once and reused. Querying the package manager and
+     * loading every app label is slow, so the result (and each lower-cased label) is cached
+     * until the screen is resumed again.
+     */
+    private var launchableAppsCache: List<ResolveInfo>? = null
+    private val appLabelCache = HashMap<String, String>()
+
+    private fun launchableApps(): List<ResolveInfo> =
+        launchableAppsCache ?: packageManager
+            .queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .also { launchableAppsCache = it }
+
+    private fun labelOf(info: ResolveInfo): String =
+        appLabelCache.getOrPut(info.activityInfo.packageName) {
+            info.loadLabel(packageManager).toString().trim().lowercase(Locale.ROOT)
         }
+
+    private fun findLaunchableApp(name: String, exactFirst: Boolean = false): ResolveInfo? {
+        val wanted = name.trim().lowercase(Locale.ROOT)
+        if (wanted.isEmpty()) return null
+        val apps = launchableApps()
+        if (exactFirst) apps.firstOrNull { labelOf(it) == wanted }?.let { return it }
+        return apps.firstOrNull { labelOf(it).contains(wanted) }
+    }
+
+    private fun openInstalledApp(requestedName: String) {
+        val match = findLaunchableApp(requestedName)
         if (match == null) {
             addMessage("THOR", "I couldn't find an app matching \"$requestedName\".")
             return
@@ -1098,23 +1140,33 @@ private fun launchIntent(
 
     private fun addMessage(who: String, message: String) {
         chat.append("$who  ›  $message\n\n")
+        if (chat.length() > MAX_CHAT_CHARS) {
+            // Drop the oldest messages, cutting at a message boundary.
+            val text = chat.text
+            val cut = text.indexOf("\n\n", text.length - TRIM_TO_CHARS)
+            chat.text = if (cut >= 0) text.substring(cut + 2) else text.takeLast(TRIM_TO_CHARS)
+        }
+        // Always show the newest message instead of leaving it below the fold.
+        chatScroll?.post { chatScroll?.fullScroll(View.FOCUS_DOWN) }
     }
 
     private fun speak(message: String) {
         if (ttsReady) {
-            setTtsLanguage()
-            applyVoiceStyle()
+            if (language.selectedItemPosition != appliedTtsLanguage) setTtsLanguage()
+            if (voiceStyle.selectedItemPosition != appliedVoiceStyle) applyVoiceStyle()
             tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "thor-${System.currentTimeMillis()}")
         }
     }
 
     private fun applyVoiceStyle() {
         val engine = tts ?: return
-        when (voiceStyle.selectedItemPosition) {
+        val style = voiceStyle.selectedItemPosition
+        when (style) {
             0 -> { engine.setPitch(0.82f); engine.setSpeechRate(0.90f) }
             1 -> { engine.setPitch(1.0f); engine.setSpeechRate(1.0f) }
             else -> { engine.setPitch(1.06f); engine.setSpeechRate(1.08f) }
         }
+        appliedVoiceStyle = style
     }
 
     override fun onInit(status: Int) {
@@ -1126,6 +1178,7 @@ private fun launchIntent(
     }
 
     private fun setTtsLanguage() {
+        appliedTtsLanguage = language.selectedItemPosition
         val locale = when (language.selectedItemPosition) {
             1 -> Locale("hi", "IN")
             2 -> Locale("bn", "IN")
@@ -1140,13 +1193,24 @@ private fun launchIntent(
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Apps may have been installed or removed while THOR was in the background.
+        launchableAppsCache = null
+        appLabelCache.clear()
+        titleAnimator?.resume()
+    }
+
     override fun onPause() {
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
+        titleAnimator?.pause()
         super.onPause()
     }
 
     override fun onDestroy() {
+        titleAnimator?.cancel()
+        titleAnimator = null
         stopWakeWord()
         try { bossRecorder?.stop() } catch (_: Exception) {}
         bossRecorder?.release()

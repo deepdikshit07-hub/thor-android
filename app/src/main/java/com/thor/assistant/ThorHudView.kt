@@ -13,6 +13,9 @@ import kotlin.math.min
 class ThorHudView(context: Context) : View(context) {
     private val density = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // Reused every frame so onDraw() does not allocate (avoids GC stutter in the animation).
+    private val outerArc = RectF()
+    private val innerArc = RectF()
     private var phase = 0f
     private val animator = ValueAnimator.ofFloat(0f, 360f).apply {
         duration = 6000L
@@ -31,6 +34,13 @@ class ThorHudView(context: Context) : View(context) {
         super.onDetachedFromWindow()
     }
 
+    // Stop redrawing while THOR is in the background to save battery and CPU.
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (!animator.isStarted) return
+        if (visibility == VISIBLE) animator.resume() else animator.pause()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val cx = width / 2f
@@ -42,9 +52,12 @@ class ThorHudView(context: Context) : View(context) {
         canvas.drawCircle(cx, cy, radius, paint)
         paint.color = 0xFF36CFFF.toInt()
         paint.strokeWidth = 2f * density
-        canvas.drawArc(RectF(cx-radius, cy-radius, cx+radius, cy+radius), phase, 82f, false, paint)
+        outerArc.set(cx - radius, cy - radius, cx + radius, cy + radius)
+        canvas.drawArc(outerArc, phase, 82f, false, paint)
         paint.color = 0xFF83E7FF.toInt()
-        canvas.drawArc(RectF(cx-radius*0.78f, cy-radius*0.78f, cx+radius*0.78f, cy+radius*0.78f), -phase*1.3f, 48f, false, paint)
+        val innerRadius = radius * 0.78f
+        innerArc.set(cx - innerRadius, cy - innerRadius, cx + innerRadius, cy + innerRadius)
+        canvas.drawArc(innerArc, -phase * 1.3f, 48f, false, paint)
         paint.style = Paint.Style.FILL
         paint.color = 0xFF52D9FF.toInt()
         canvas.drawCircle(cx, cy, 3.5f*density, paint)

@@ -14,9 +14,15 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch replaces an older build still in progress.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout source
@@ -41,7 +47,15 @@ jobs:
         with:
           gradle-version: '8.13'
 
+      - name: Cache bundled offline AI model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/Qwen3-0.6B.litertlm
+          key: qwen3-0.6b-litertlm-v1
+
       - name: Download bundled offline AI model
+        if: steps.model-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p app/src/main/assets
           curl -fL --retry 3 --retry-delay 5 \
@@ -50,7 +64,7 @@ jobs:
           test "$(stat -c%s app/src/main/assets/Qwen3-0.6B.litertlm)" -gt 100000000
 
       - name: Build debug APK with bundled offline AI
-        run: gradle --no-daemon :app:assembleDebug
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
