@@ -96,7 +96,7 @@ object ThorWebSearchManager {
                 host.endsWith(".duckduckgo.com", ignoreCase = true)) continue
 
             val snippet = node.selectFirst(
-                ".result__snippet, [data-result=snippet], .result-snippet, .result-snippet"
+                ".result__snippet, [data-result=snippet], .result-snippet"
             )?.text()?.trim().orEmpty()
             found.putIfAbsent(destination, Result(title, destination, snippet))
             if (found.size >= limit.coerceIn(1, 10)) break
