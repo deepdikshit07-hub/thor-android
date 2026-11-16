@@ -1101,7 +1101,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            addMessage("THOR", "No compatible speech-recognition service is installed or enabled on this device. Enable the device speech service and try again.")
+            addMessage("THOR", "The in-app speech service is unavailable. Trying Android's system speech input…")
+            launchSystemSpeechFallback()
             return
         }
 
@@ -1122,7 +1123,13 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     override fun onError(error: Int) {
                         android.util.Log.e("THOR_MIC", "Speech recognition error=$error")
                         stopTapRecognition()
-                        addMessage("THOR", speechErrorMessage(error))
+                        if (error == SpeechRecognizer.ERROR_CLIENT ||
+                            error == SpeechRecognizer.ERROR_SERVER) {
+                            addMessage("THOR", "The in-app speech service stopped. Trying Android's system speech input…")
+                            launchSystemSpeechFallback()
+                        } else {
+                            addMessage("THOR", speechErrorMessage(error))
+                        }
                     }
 
                     override fun onResults(results: Bundle?) {
@@ -1150,6 +1157,40 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             android.util.Log.e("THOR_MIC", "Could not start in-app speech recognition", error)
             stopTapRecognition()
             addMessage("THOR", "THOR could not start the microphone: ${error.message ?: error.javaClass.simpleName}. Check microphone permission and close other apps using the microphone.")
+        }
+    }
+
+    /**
+     * Some Android/OEM builds expose speech recognition through the system
+     * ACTION_RECOGNIZE_SPEECH activity even when the in-app SpeechRecognizer
+     * service is unavailable or crashes. Use it as a compatibility fallback.
+     */
+    private fun launchSystemSpeechFallback() {
+        try {
+            val languageTag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to THOR")
+            }
+            startActivityForResult(intent, 1005)
+        } catch (error: Exception) {
+            addMessage("THOR", "Android's system speech input is unavailable: ${error.message ?: error.javaClass.simpleName}. Check that a speech service is installed and microphone permission is allowed.")
+        }
+    }
+
+    @Deprecated("Legacy activity result callback is used for speech-service compatibility.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 1005) return
+        if (resultCode == RESULT_OK) {
+            val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()?.trim()
+            if (!spoken.isNullOrBlank()) handleCommand(spoken)
+            else addMessage("THOR", "I didn't catch that. Please try again.")
+        } else {
+            addMessage("THOR", "Voice input was cancelled or the speech service returned no result.")
         }
     }
 
