@@ -1952,21 +1952,29 @@ lower.startsWith("অ্যালার্ম ") -> {
                         providerTitle = selectedSettings.model
                     }
                     ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> {
-                        try {
-                            if (!chatgpt.status().planUsageEnabled) error("No ChatGPT plan connection is active.")
+                        if (chatgpt.status().planUsageEnabled) {
+                            // Do not silently change billing paths after the user enabled ChatGPT plan usage.
                             chatgpt.streamResponse(styleInstruction, selectedSettings.model, onToken)
                             providerTitle = "ChatGPT account"
-                        } catch (accountError: Exception) {
-                            if (accountError is CancellationException) throw accountError
-                            if (streamed.isNotEmpty()) throw accountError
-                            // Gemini is a setup fallback only. Once the user has
-                            // authorized ChatGPT plan usage, never silently switch
-                            // billing paths on quota, eligibility, region, or service errors.
-                            if (chatgpt.status().planUsageEnabled) throw accountError
-                            if (!firebaseReady) throw accountError
-                            runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("ChatGPT plan usage is not connected — using THOR's configured Gemini fallback.\n") }
-                            GeminiAssistant.stream(styleInstruction, providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model, onToken)
-                            providerTitle = "Gemini (no-key fallback)"
+                        } else {
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    chat.append("ChatGPT plan usage is not connected. Trying THOR's configured automatic providers…\\n")
+                                }
+                            }
+                            val result = providerManager.streamAutomatically(
+                                styleInstruction,
+                                geminiFirebase = { emit ->
+                                    if (!firebaseReady) error("Firebase AI Logic is not initialized. Check Firebase setup and App Check.")
+                                    GeminiAssistant.stream(
+                                        styleInstruction,
+                                        providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model,
+                                        emit
+                                    )
+                                },
+                                onChunk = onToken
+                            )
+                            providerTitle = result.provider.title + " (automatic fallback)"
                         }
                     }
                     else -> {
