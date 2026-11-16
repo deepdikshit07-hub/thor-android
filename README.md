@@ -26,7 +26,7 @@ The project is designed to be edited on a phone and built by GitHub Actions.
 2. Upload the contents of this folder, keeping the same directory structure.
 3. Open the repository's Actions tab and enable Actions if asked.
 4. Select **Build THOR APK** and press **Run workflow**, or push a commit to `main`.
-5. Open the successful workflow run, scroll to **Artifacts**, and download `THOR-debug-apk`.
+5. Open the successful workflow run, scroll to **Artifacts**, and download `THOR-debug-apk` for development/testing only. Debug artifacts are runner-signed and are not suitable for production OTA upgrades.
 6. Extract the ZIP and install `app-debug.apk` on your Android phone.
 
 ## Termux editing setup
@@ -68,12 +68,27 @@ git push
 
 Never paste a password or access token into chat or commit it into the project.
 
+## OTA updates
+
+THOR checks the latest GitHub Release when the app starts, provides a **CHECK FOR UPDATES** button, and schedules a network-connected background check approximately every hour (Android may defer background work to save battery). When a newer release is found, THOR posts an Android notification; tapping it opens THOR to review and download the update. The updater verifies the APK SHA-256 checksum and opens Android's package installer. Android requires the user to approve installation, and Android 13+ users must allow THOR notifications for background alerts.
+
+Before publishing the first OTA release:
+
+1. Create one permanent Android release keystore and keep a secure offline backup. The currently installed THOR APK came from a GitHub Actions debug build, whose runner-generated signing key is temporary; it cannot be updated in place with a new permanent release key. Plan one migration install.
+2. Add these four GitHub Actions repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
+3. Confirm that the release keystore certificate matches the certificate on currently installed THOR builds.
+4. Only after the signing identity is confirmed and the PR is approved, merge it into `main`. The release workflow then builds and publishes a uniquely versioned OTA release automatically.
+
+The release workflow also uploads the signed production APK and `latest.json` to that run's **Artifacts** section for 90 days. Distribute the signed release APK from the `Publish THOR OTA Release` workflow—not the debug APK. The debug workflow uses GitHub-hosted runners, whose generated debug signing keys are not persistent. If an installed THOR APK was signed with a different key, Android will not accept the first release APK as an in-place update. A one-time migration installation will be required for those devices. Do not uninstall existing installations until the migration and data-preservation plan has been tested.
+
+The ~586 MB offline AI model is downloaded separately on demand and is not included in each APK release. Workflow builds derive their version code from the repository-wide GitHub run ID, bounded below Android's maximum supported version code; this keeps release versions ahead of earlier workflow builds.
+
 ## Device notes
-- `minSdk 23` supports older Android releases; the app should run on Android 10/11 and newer.
+- `minSdk 24` supports older Android releases; the app should run on Android 10/11 and newer.
 - The speech-recognition activity is provided by the device's installed speech service. `PREFER_OFFLINE` is only a preference and does not guarantee offline recognition.
 - For offline speech, download the required language packs in the phone's speech input settings if your installed engine offers them.
 - Text-to-Speech voice availability depends on installed Android TTS voice data.
 - This starter does not read private files, messages, call logs, or notifications. It does not have unrestricted phone access.
 - Calling opens the dialer; SMS opens the compose screen. You review and confirm those actions yourself.
-- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
+- The offline AI model (~586 MB) is downloaded separately on demand after installation and stored in THOR's private app storage. It is not bundled into each APK update, so routine app updates stay much smaller. Each device downloads the model once unless its app data is cleared.\n- The current upgrade branch adds local notes and tasks without cloud access. Gemini online AI still needs Firebase AI Logic setup and a Firebase app configuration file. Do not commit API keys, passwords, or App Check debug tokens.
 - Do not place API keys, passwords, or tokens in source code or GitHub commits.

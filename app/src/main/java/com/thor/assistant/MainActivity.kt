@@ -22,6 +22,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -65,6 +70,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var bossSetupDialog: AlertDialog? = null
     private var pendingBossVoiceEnrollment = false
     private lateinit var offlineAi: ThorOfflineAi
+    private lateinit var updateManager: ThorUpdateManager
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
@@ -84,11 +90,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
+        updateManager = ThorUpdateManager(this)
+        schedulePeriodicUpdateChecks()
+        requestUpdateNotificationPermission()
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
+        if (intent?.getBooleanExtra("thor_open_update_prompt", false) == true) {
+            Handler(Looper.getMainLooper()).post { checkForUpdates(silent = false) }
+        } else {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) checkForUpdates(silent = true)
+            }, 12_000L)
+        }
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
@@ -99,6 +115,108 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 } catch (error: Exception) {
                     offlineAiButton?.text = "RETRY OFFLINE AI"
                     addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
+                }
+            }
+        }
+    }
+
+    private fun schedulePeriodicUpdateChecks() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val request = PeriodicWorkRequestBuilder<ThorUpdateCheckWorker>(1, java.util.concurrent.TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "thor-ota-periodic-check",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+
+    private fun requestUpdateNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("thor_open_update_prompt", false)) {
+            checkForUpdates(silent = false)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val pendingPath = getSharedPreferences("thor_ota", MODE_PRIVATE)
+            .getString("pending_install_path", null) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
+            val pendingApk = java.io.File(pendingPath)
+            if (pendingApk.isFile && pendingApk.length() > 0L) {
+                updateManager.install(pendingApk)
+            } else {
+                getSharedPreferences("thor_ota", MODE_PRIVATE).edit()
+                    .remove("pending_install_path").apply()
+                addMessage("THOR", "The downloaded update was not found. Please check for updates again.")
+            }
+        }
+    }
+
+    private fun checkForUpdates(silent: Boolean) {
+        mainScope.launch {
+            try {
+                val update = updateManager.checkForUpdate()
+                if (update == null) {
+                    if (!silent) addMessage("THOR", "THOR is already up to date.")
+                    return@launch
+                }
+                val builder = AlertDialog.Builder(this@MainActivity)
+                    .setTitle("THOR update available: ${update.versionName}")
+                    .setMessage("${update.releaseNotes}\n\nDownload and install this update?")
+                    .setPositiveButton("Download update") { _, _ ->
+                        val progressDialog = android.app.ProgressDialog(this@MainActivity).apply {
+                            setTitle("Downloading THOR ${update.versionName}")
+                            setMessage("Downloading and verifying the update...")
+                            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                            max = 100
+                            progress = 0
+                            setCancelable(false)
+                            show()
+                        }
+                        mainScope.launch {
+                            try {
+                                addMessage("THOR", "Downloading THOR ${update.versionName}...")
+                                val apk = updateManager.download(update) { percent ->
+                                    runOnUiThread {
+                                        if (progressDialog.isShowing) {
+                                            progressDialog.progress = percent
+                                            progressDialog.setMessage("Downloading update... $percent%")
+                                        }
+                                    }
+                                }
+                                progressDialog.dismiss()
+                                addMessage("THOR", "Download verified. Checking package and signing identity.")
+                                updateManager.install(apk)
+                            } catch (error: Exception) {
+                                if (progressDialog.isShowing) progressDialog.dismiss()
+                                addMessage("THOR", "Update failed: ${error.message ?: error.javaClass.simpleName}")
+                            }
+                        }
+                    }
+                if (!update.mandatory) builder.setNegativeButton("Later", null)
+                builder.setCancelable(!update.mandatory).show()
+            } catch (error: Exception) {
+                if (!silent) {
+                    val reason = error.message ?: error.javaClass.simpleName
+                    if (reason.contains("No official THOR update has been published yet", ignoreCase = true)) {
+                        addMessage("THOR", "THOR's update feed is ready, but its first signed release has not been published yet. Please check again later.")
+                    } else {
+                        addMessage("THOR", "Couldn't check for updates: $reason")
+                    }
                 }
             }
         }
@@ -256,6 +374,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         offlineAiButton = offlineButton
         offlineButton.setOnClickListener { installOfflineAi() }
         root.addView(offlineButton, matchWrap())
+
+        val updateButton = makeButton("CHECK FOR UPDATES")
+        updateButton.setOnClickListener { checkForUpdates(silent = false) }
+        root.addView(updateButton, matchWrap())
 
         voiceStyle = Spinner(this)
         voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
@@ -1084,7 +1206,7 @@ private fun launchIntent(
         "• teach me that no cap means I am serious\n" +
         "• what have you learned / forget learning X / clear learned memory\n" +
         "• install offline AI for open-ended offline chat\n\n" +
-        "The offline language model is bundled into the APK build (~586 MB). Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
+        "The offline language model is downloaded separately on demand (~586 MB), not bundled into each APK. Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
         val answer = when (language.selectedItemPosition) {
