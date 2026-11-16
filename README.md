@@ -74,7 +74,7 @@ THOR checks the latest GitHub Release when the app starts, provides a **CHECK FO
 
 Before publishing the first OTA release:
 
-1. Create one permanent Android release keystore and keep a secure offline backup.
+1. Create one permanent Android release keystore and keep a secure offline backup. The currently installed THOR APK came from a GitHub Actions debug build, whose runner-generated signing key is temporary; it cannot be updated in place with a new permanent release key. Plan one migration install.
 2. Add these four GitHub Actions repository secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD`.
 3. Confirm that the release keystore certificate matches the certificate on currently installed THOR builds.
 4. Only after the signing identity is confirmed and the PR is approved, merge it into `main`. The release workflow then builds and publishes a uniquely versioned OTA release automatically.
