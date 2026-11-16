@@ -1934,6 +1934,17 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
         activeAiReply = true
         addMessage("THOR", "")
+        val routeLabel = when (selectedProvider) {
+            ThorAiProviderManager.Provider.AUTO -> "configured online AI providers"
+            ThorAiProviderManager.Provider.GEMINI -> "Firebase Gemini"
+            ThorAiProviderManager.Provider.CHATGPT_ACCOUNT ->
+                if (chatgpt.status().planUsageEnabled) "your ChatGPT account" else "configured fallback providers"
+            ThorAiProviderManager.Provider.LOCAL -> "on-device AI"
+            else -> selectedProvider.title
+        }
+        // Show activity before the first network token arrives. Without this,
+        // a slow model handshake leaves a blank assistant bubble that looks frozen.
+        chat.append("Connecting to $routeLabel…\\n")
         val streamed = StringBuilder()
         mainScope.launch {
             try {
