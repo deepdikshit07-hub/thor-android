@@ -174,7 +174,7 @@ async function handle(request, env) {
       ).bind(identity.uid, now, identity.uid, now - 3600).run();
       if (!usage?.meta?.changes) return json({ error: "Live Mode token limit reached. Try again later." }, 429);
 
-      const tokenResponse = await fetch("https://generativelanguage.googleapis.com/v1beta/auth_tokens", {
+      const tokenResponse = await fetch("https://generativelanguage.googleapis.com/v1alpha/auth_tokens", {
         method: "POST",
         headers: {
           "x-goog-api-key": env.GEMINI_API_KEY,
@@ -185,7 +185,7 @@ async function handle(request, env) {
           expireTime: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
           newSessionExpireTime: new Date(Date.now() + 60 * 1000).toISOString(),
           liveConnectConstraints: {
-            model: "models/gemini-3.8-live",
+            model: "models/gemini-3.1-flash-live-preview",
             config: {
               sessionResumption: {},
               responseModalities: ["AUDIO"],
