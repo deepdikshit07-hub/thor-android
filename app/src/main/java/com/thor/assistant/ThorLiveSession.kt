@@ -87,7 +87,7 @@ class ThorLiveSession(
             if (stopped.get()) return
             val ready = CompletableDeferred<Unit>()
             val request = Request.Builder()
-                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=" + java.net.URLEncoder.encode(ephemeralToken, "UTF-8"))
+                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=" + java.net.URLEncoder.encode(ephemeralToken, "UTF-8"))
                 .build()
             socket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
