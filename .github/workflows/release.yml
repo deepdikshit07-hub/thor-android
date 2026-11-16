@@ -1,0 +1,141 @@
+name: Publish THOR OTA Release
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Compile debug APK before publishing
+        run: gradle --no-daemon :app:assembleDebug
+
+  release:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Verify release signing secrets
+        shell: bash
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "::error::Missing ANDROID_KEYSTORE_BASE64 repository secret"; exit 1; }
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "::error::Missing ANDROID_KEYSTORE_PASSWORD repository secret"; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "::error::Missing ANDROID_KEY_ALIAS repository secret"; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "::error::Missing ANDROID_KEY_PASSWORD repository secret"; exit 1; }
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Decode release keystore
+        shell: bash
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/thor-release.jks"
+          test -s "$RUNNER_TEMP/thor-release.jks"
+
+      - name: Build signed release APK
+        id: build
+        shell: bash
+        run: |
+          VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
+          VERSION_CODE="$((GITHUB_RUN_ID % 2000000000))"
+          if [ "$VERSION_CODE" -lt 1 ]; then VERSION_CODE=1; fi
+          TAG_NAME="v${VERSION_NAME}"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          gradle --no-daemon :app:assembleRelease \
+            -PthorVersionCode="$VERSION_CODE" \
+            -PthorVersionName="$VERSION_NAME" \
+            -PthorKeystorePath="$RUNNER_TEMP/thor-release.jks" \
+            -PthorStorePassword="$ANDROID_KEYSTORE_PASSWORD" \
+            -PthorKeyAlias="$ANDROID_KEY_ALIAS" \
+            -PthorKeyPassword="$ANDROID_KEY_PASSWORD"
+          mkdir -p release-assets
+          cp app/build/outputs/apk/release/app-release.apk release-assets/thor-release.apk
+          SHA256="$(sha256sum release-assets/thor-release.apk | awk '{print $1}')"
+          TAG_NAME="v${VERSION_NAME}"
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/thor-release.apk"
+          export VERSION_NAME VERSION_CODE SHA256 APK_URL
+          python3 - <<'PY'
+          import json, os
+          manifest = {
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "versionName": os.environ["VERSION_NAME"],
+              "apkUrl": os.environ["APK_URL"],
+              "sha256": os.environ["SHA256"],
+              "mandatory": False,
+              "releaseNotes": "THOR improvements and fixes"
+          }
+          with open("release-assets/latest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+          PY
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.build.outputs.tag_name }}
+          name: THOR ${{ steps.build.outputs.version_name }}
+          generate_release_notes: true
+          files: |
+            release-assets/thor-release.apk
+            release-assets/latest.json
+      - name: Upload signed APK to Actions artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: THOR-release-${{ steps.build.outputs.version_name }}
+          path: |
+            release-assets/thor-release.apk
+            release-assets/latest.json
+          if-no-files-found: error
+          retention-days: 90

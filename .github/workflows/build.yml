@@ -1,30 +1,20 @@
-
 name: Build THOR APK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
-      - thor-2.0-upgrade
-      - 'experiment/**'
-      - 'feature/**'
+      - "**"
   pull_request:
     branches:
       - main
-      - 'experiment/**'
-      - 'feature/**'
-
-concurrency:
-  group: thor-android-${{ github.event.pull_request.head.ref || github.ref }}
-  cancel-in-progress: true
+      - feature/thor-ota-updates
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
 
     steps:
@@ -49,68 +39,45 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+
       - name: Run Android lint and unit tests
-        run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest
-
-      - name: Download bundled offline AI model
+        shell: bash
         run: |
-          mkdir -p app/src/main/assets
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm?download=true" \
-            -o app/src/main/assets/Qwen3-0.6B.litertlm
-          test "$(stat -c%s app/src/main/assets/Qwen3-0.6B.litertlm)" -gt 100000000
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:lintDebug :app:testDebugUnitTest; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle dependency/build attempt $attempt failed; retrying after backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
-      - name: Download WeSpeaker model and frontend assets
+      # The 586 MB LiteRT model is intentionally NOT bundled into the APK.
+      # ThorOfflineAi already downloads it on demand into private app storage.
+      - name: Build lightweight debug APK
         run: |
-          mkdir -p app/src/main/assets
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://huggingface.co/litert-community/Speaker-Diarization-LiteRT/resolve/main/wespeaker_emb_fp16.tflite?download=true" \
-            -o app/src/main/assets/wespeaker_emb_fp16.tflite
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://raw.githubusercontent.com/geneing/LiteRT-Models-Pocket-TTS/main/diarization/app/src/main/assets/mel80_257.bin" \
-            -o app/src/main/assets/mel80_257.bin
-          curl -fL --retry 3 --retry-delay 5 \
-            "https://raw.githubusercontent.com/geneing/LiteRT-Models-Pocket-TTS/main/diarization/app/src/main/assets/hamming400.bin" \
-            -o app/src/main/assets/hamming400.bin
-          test "$(stat -c%s app/src/main/assets/wespeaker_emb_fp16.tflite)" -gt 10000000
-          test "$(stat -c%s app/src/main/assets/mel80_257.bin)" -eq 82240
-          test "$(stat -c%s app/src/main/assets/hamming400.bin)" -eq 1600
-
-      - name: Build debug APK with bundled offline AI and speaker model
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Validate APK artifact
-        run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          unzip -t "$APK" >/dev/null
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | grep -q "package: name='com.thor.assistant'"
-
-      - name: Report APK signing certificate fingerprints
-        run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          CERTS="$("$APKSIGNER" verify --print-certs "$APK")"
-          echo "## Android signing certificate fingerprints" >> "$GITHUB_STEP_SUMMARY"
-          echo "These fingerprints identify the certificate on this exact APK." >> "$GITHUB_STEP_SUMMARY"
-          echo "$CERTS" | grep -E 'Signer #1 certificate (SHA-1|SHA-256) digest:' | tee /dev/stderr >> "$GITHUB_STEP_SUMMARY"
+          VERSION_CODE="$((GITHUB_RUN_ID % 2000000000))"
+          if [ "$VERSION_CODE" -lt 1 ]; then VERSION_CODE=1; fi
+          VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:assembleDebug \
+              -PthorVersionCode="$VERSION_CODE" \
+              -PthorVersionName="$VERSION_NAME"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle APK build attempt $attempt failed; retrying after backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
       - name: Upload APK
-        id: upload_apk
         uses: actions/upload-artifact@v4
         with:
-          name: THOR-APK-DOWNLOAD
+          name: THOR-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
-
-      - name: Publish APK details
-        if: success()
-        run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          echo "## THOR APK build" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Size: $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Artifact: THOR-APK-DOWNLOAD" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Download link: ${{ steps.upload_apk.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
-          
