@@ -67,6 +67,12 @@ All endpoints except `/health` require `Authorization: Bearer <Firebase ID token
 - `GET /v1/sessions/{sessionId}/check`: Device B checks whether its session is still active.
 - `POST /v1/live-token`: authenticated Android client requests a single-use constrained Gemini Live token (requires `GEMINI_API_KEY`).
 
+## Local validation
+
+From this directory, run `npm run build` to syntax-check the Worker and `npm test` to run the route tests. The GitHub Worker-check workflow runs these checks for pull requests that change `cloudflare/master-mode/**`.
+
+Preview deployments intentionally have no D1 binding until a separate non-production database is provisioned. Their `/health` endpoint remains available, while `/v1/*` operations return HTTP 503. Do not attach the production `thor-master-approval` D1 database to a preview deployment.
+
 ## Deployment limitations and operational notes
 
 - FCM approval alerts use a high-priority data-only message so `ThorMessagingService` can create a notification containing the request ID in its tap action while THOR is backgrounded. FCM is best-effort: a force-stopped app, disabled notifications, lost network, or aggressive battery management can delay or prevent notifications.
