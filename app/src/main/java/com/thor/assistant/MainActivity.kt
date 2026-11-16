@@ -1770,6 +1770,7 @@ lower.startsWith("অ্যালার্ম ") -> {
                             chatgpt.streamResponse(styleInstruction, onChunk = onToken)
                             providerTitle = "ChatGPT account"
                         } catch (accountError: Exception) {
+                            if (accountError is CancellationException) throw accountError
                             if (streamed.isNotEmpty()) throw accountError
                             if (!firebaseReady) throw accountError
                             runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("ChatGPT account unavailable — using THOR's no-key Gemini fallback.\n") }
