@@ -26,41 +26,61 @@ object ThorWebSearchManager {
         require(cleanQuery.isNotBlank()) { "Enter a search query." }
 
         val encoded = URLEncoder.encode(cleanQuery, StandardCharsets.UTF_8.name())
-        val connection = (URL("https://html.duckduckgo.com/html/?q=" + encoded + "&kp=1")
-            .openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 12_000
-            readTimeout = 18_000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
-            setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            setRequestProperty("Accept-Language", "en-US,en;q=0.8")
-        }
-
-        try {
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                val detail = connection.errorStream?.bufferedReader()?.use { it.readText() }
-                    .orEmpty().take(160)
-                error("Search provider returned HTTP " + status +
-                    if (detail.isBlank()) "." else ": " + detail)
+        // DDG's full HTML endpoint can occasionally return a challenge page to
+        // mobile clients. Try its lighter HTML endpoint before reporting failure.
+        val endpoints = listOf(
+            "https://html.duckduckgo.com/html/?q=$encoded&kp=1",
+            "https://lite.duckduckgo.com/lite/?q=$encoded&kp=1"
+        )
+        var lastFailure: Exception? = null
+        for (endpoint in endpoints) {
+            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 12_000
+                readTimeout = 18_000
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+                setRequestProperty("Accept", "text/html,application/xhtml+xml")
+                setRequestProperty("Accept-Language", "en-US,en;q=0.8")
             }
-            val html = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
-            parseResults(html, limit)
-        } finally {
-            connection.disconnect()
+            try {
+                val status = connection.responseCode
+                if (status !in 200..299) {
+                    val detail = connection.errorStream?.bufferedReader(StandardCharsets.UTF_8)
+                        ?.use { it.readText() }.orEmpty().take(120)
+                    throw IllegalStateException(
+                        "Search provider returned HTTP $status" +
+                            if (detail.isBlank()) "." else ": $detail"
+                    )
+                }
+                val html = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+                val results = parseResults(html, limit)
+                if (results.isNotEmpty()) return@withContext results
+                lastFailure = IllegalStateException("Search provider returned a page without readable results.")
+            } catch (error: Exception) {
+                lastFailure = error
+            } finally {
+                connection.disconnect()
+            }
         }
+        throw IllegalStateException(
+            lastFailure?.message ?: "Both web search endpoints are unavailable. Check your internet connection.",
+            lastFailure
+        )
     }
 
     /** Pure HTML parser so the result filtering can be verified in local unit tests. */
     internal fun parseResults(html: String, limit: Int = 8): List<Result> {
         val document = Jsoup.parse(html)
-        val nodes = document.select("div.result, article[data-testid=result]")
+        val nodes = document.select("div.result, article[data-testid=result], tr")
         val found = LinkedHashMap<String, Result>()
 
         for (node in nodes) {
-            val link = node.selectFirst("a.result__a, a[data-testid=result-title-a], .result__title a")
-                ?: continue
+            // The lite endpoint uses a compact table row and result-link class;
+            // the full endpoint uses div.result and result__a.
+            val link = node.selectFirst(
+                "a.result__a, a.result-link, a[data-testid=result-title-a], .result__title a"
+            ) ?: continue
             val title = link.text().trim()
             val rawHref = link.absUrl("href").ifBlank { link.attr("href") }.trim()
             if (title.isBlank() || rawHref.isBlank()) continue
@@ -75,8 +95,9 @@ object ThorWebSearchManager {
             if (host.equals("duckduckgo.com", ignoreCase = true) ||
                 host.endsWith(".duckduckgo.com", ignoreCase = true)) continue
 
-            val snippet = node.selectFirst(".result__snippet, [data-result=snippet], .result-snippet")
-                ?.text()?.trim().orEmpty()
+            val snippet = node.selectFirst(
+                ".result__snippet, [data-result=snippet], .result-snippet, .result-snippet"
+            )?.text()?.trim().orEmpty()
             found.putIfAbsent(destination, Result(title, destination, snippet))
             if (found.size >= limit.coerceIn(1, 10)) break
         }
