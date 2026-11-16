@@ -22,6 +22,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.SearchManager
@@ -65,10 +72,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var bossSetupDialog: AlertDialog? = null
     private var pendingBossVoiceEnrollment = false
     private lateinit var offlineAi: ThorOfflineAi
+    private lateinit var updateManager: ThorUpdateManager
     private var offlineAiButton: Button? = null
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var firebaseReady = false
+    private val aiConversation = mutableListOf<Pair<String, String>>()
+    private var activeAiReply = false
     private var wakeRecognizer: SpeechRecognizer? = null
+    private var tapRecognizer: SpeechRecognizer? = null
     private val wakeHandler = Handler(Looper.getMainLooper())
     private var wakeEnabled = false
     private var waitingForWakeCommand = false
@@ -78,17 +89,187 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private val languageTags = listOf("en-IN", "hi-IN", "bn-IN")
     private val voiceStyles = listOf("Cinematic Deep", "Natural", "Crisp Assistant")
 
+    private fun accentColor(): Int {
+        val key = getSharedPreferences("thor_appearance", MODE_PRIVATE)
+            .getString("accent", "champagne")
+        return when (key) {
+            "blue" -> Color.rgb(126, 177, 220)
+            "purple" -> Color.rgb(177, 151, 218)
+            "green" -> Color.rgb(139, 183, 154)
+            "rose" -> Color.rgb(211, 155, 169)
+            "gold" -> Color.rgb(215, 184, 121)
+            else -> Color.rgb(213, 197, 164)
+        }
+    }
+
+    private fun showSettingsDialog() {
+        val items = arrayOf(
+            "Models",
+            "AI provider & model",
+            "Features",
+            "Profile",
+            "Appearance",
+            "Language & voice",
+            "About THOR",
+            "Check for updates"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Settings")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> installOfflineAi()
+                    1 -> showAiProviderSettings()
+                    2 -> showFeaturesDialog()
+                    3 -> AlertDialog.Builder(this)
+                        .setTitle("THOR Profile")
+                        .setMessage("Current profile: ${bossProfile.bossName()}\\nProfile data is stored on this device.")
+                        .setPositiveButton("OK", null)
+                        .show().also { stylePremiumDialog(it) }
+                    4 -> showThemeChooser()
+                    5 -> showLanguageVoiceInfo()
+                    6 -> AlertDialog.Builder(this)
+                        .setTitle("About THOR")
+                        .setMessage("Emblem engineered & developed by Aritra Adhikary and Deep Dikshit.")
+                        .setPositiveButton("Close", null)
+                        .show().also { stylePremiumDialog(it) }
+                    7 -> checkForUpdates(silent = false)
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
+    private fun showFeaturesDialog() {
+        val items = arrayOf(
+            "Personalize appearance",
+            "Offline AI",
+            "Language and voice",
+            if (wakeEnabled) "Turn wake word off" else "Turn wake word on",
+            "Check for updates",
+            "Help and commands"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("THOR Features")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showThemeChooser()
+                    1 -> installOfflineAi()
+                    2 -> showLanguageVoiceInfo()
+                    3 -> {
+                        val button = wakeButton ?: makeButton("WAKE: OFF").also { wakeButton = it }
+                        toggleWakeWord(button)
+                    }
+                    4 -> checkForUpdates(silent = false)
+                    5 -> addMessage("THOR", helpText())
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
+    private fun showThemeChooser() {
+        val labels = arrayOf(
+            "Silver & Champagne",
+            "Ocean Blue",
+            "Royal Purple",
+            "Emerald Green",
+            "Rose"
+        )
+        val keys = arrayOf("champagne", "blue", "purple", "green", "rose")
+        val current = getSharedPreferences("thor_appearance", MODE_PRIVATE)
+            .getString("accent", "champagne")
+        val selected = keys.indexOf(current).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("Choose your accent")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                getSharedPreferences("thor_appearance", MODE_PRIVATE)
+                    .edit().putString("accent", keys[which]).apply()
+                dialog.dismiss()
+                val previousChat = if (::chat.isInitialized) chat.text.toString() else ""
+                buildScreen()
+                if (::chat.isInitialized) chat.text = previousChat
+                Toast.makeText(this, labels[which] + " theme applied", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
+    private fun showLanguageVoiceInfo() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+        panel.addView(TextView(this).apply {
+            text = "Language"
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        val languageChoice = Spinner(this)
+        languageChoice.adapter = premiumSpinnerAdapter(languages)
+        languageChoice.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
+        languageChoice.setSelection(getSharedPreferences("thor_preferences", MODE_PRIVATE).getInt("language", 0).coerceIn(0, languages.lastIndex))
+        panel.addView(languageChoice, matchWrap())
+        panel.addView(TextView(this).apply {
+            text = "Voice style"
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+        }, matchWrap())
+        val voiceChoice = Spinner(this)
+        voiceChoice.adapter = premiumSpinnerAdapter(voiceStyles)
+        voiceChoice.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
+        voiceChoice.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        panel.addView(voiceChoice, matchWrap())
+        AlertDialog.Builder(this)
+            .setTitle("Language & voice")
+            .setView(panel)
+            .setNeutralButton("Preview") { _, _ ->
+                val lang = languageChoice.selectedItemPosition
+                val sample = when (lang) {
+                    1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
+                    2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
+                    else -> "Hello. I am THOR. I am ready to help."
+                }
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", voiceChoice.selectedItemPosition).apply()
+                getSharedPreferences("thor_preferences", MODE_PRIVATE).edit().putInt("language", lang).apply()
+                if (::language.isInitialized) language.setSelection(lang)
+                if (::voiceStyle.isInitialized) voiceStyle.setSelection(voiceChoice.selectedItemPosition)
+                speak(sample)
+            }
+            .setPositiveButton("Save") { _, _ ->
+                val selectedLanguage = languageChoice.selectedItemPosition
+                val selectedVoice = voiceChoice.selectedItemPosition
+                getSharedPreferences("thor_preferences", MODE_PRIVATE).edit().putInt("language", selectedLanguage).apply()
+                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", selectedVoice).apply()
+                if (::language.isInitialized) language.setSelection(selectedLanguage)
+                if (::voiceStyle.isInitialized) voiceStyle.setSelection(selectedVoice)
+                applyVoiceStyle()
+                Toast.makeText(this, "Language and voice preferences saved", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         localStore = ThorLocalStore(this)
         learningMemory = ThorLearningMemory(this)
         bossProfile = ThorBossProfile(this)
         offlineAi = ThorOfflineAi(applicationContext)
+        updateManager = ThorUpdateManager(this)
+        schedulePeriodicUpdateChecks()
+        requestUpdateNotificationPermission()
         initializeFirebase()
         tts = TextToSpeech(this, this)
         buildScreen()
         addMessage("THOR", "Systems ready. Type a command or tap the microphone.")
         showBossSetupIfNeeded()
+        if (intent?.getBooleanExtra("thor_open_update_prompt", false) == true) {
+            Handler(Looper.getMainLooper()).post { checkForUpdates(silent = false) }
+        } else {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) checkForUpdates(silent = true)
+            }, 12_000L)
+        }
         if (offlineAi.isModelInstalled() || offlineAi.hasBundledModel()) {
             offlineAiButton?.text = "LOADING OFFLINE AI..."
             mainScope.launch {
@@ -99,6 +280,103 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 } catch (error: Exception) {
                     offlineAiButton?.text = "RETRY OFFLINE AI"
                     addMessage("THOR", "Offline AI could not load: ${error.message ?: "model/runtime error"}")
+                }
+            }
+        }
+    }
+
+    private fun schedulePeriodicUpdateChecks() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val request = PeriodicWorkRequestBuilder<ThorUpdateCheckWorker>(1, java.util.concurrent.TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "thor-ota-periodic-check",
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+
+    private fun requestUpdateNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3001)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("thor_open_update_prompt", false)) {
+            checkForUpdates(silent = false)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val pendingPath = getSharedPreferences("thor_ota", MODE_PRIVATE)
+            .getString("pending_install_path", null) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && packageManager.canRequestPackageInstalls()) {
+            val pendingApk = java.io.File(pendingPath)
+            if (pendingApk.isFile && pendingApk.length() > 0L) {
+                updateManager.install(pendingApk)
+            } else {
+                getSharedPreferences("thor_ota", MODE_PRIVATE).edit()
+                    .remove("pending_install_path").apply()
+                addMessage("THOR", "The downloaded update was not found. Please check for updates again.")
+            }
+        }
+    }
+
+    private fun checkForUpdates(silent: Boolean) {
+        mainScope.launch {
+            try {
+                val update = updateManager.checkForUpdate()
+                if (update == null) {
+                    if (!silent) addMessage("THOR", "THOR is already up to date.")
+                    return@launch
+                }
+                val builder = AlertDialog.Builder(this@MainActivity)
+                    .setTitle("THOR update available: ${update.versionName}")
+                    .setMessage("${update.releaseNotes}\n\nDownload and install this update?")
+                    .setPositiveButton("Download update") { _, _ ->
+                        val progressDialog = android.app.ProgressDialog(this@MainActivity).apply {
+                            setTitle("Downloading THOR ${update.versionName}")
+                            setMessage("Downloading and verifying the update...")
+                            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                            max = 100
+                            progress = 0
+                            setCancelable(false)
+                            show()
+                        }
+                        mainScope.launch {
+                            try {
+                                addMessage("THOR", "Downloading THOR ${update.versionName}...")
+                                val apk = updateManager.download(update) { percent ->
+                                    runOnUiThread {
+                                        if (progressDialog.isShowing) {
+                                            progressDialog.progress = percent
+                                            progressDialog.setMessage("Downloading update... $percent%")
+                                        }
+                                    }
+                                }
+                                progressDialog.dismiss()
+                                addMessage("THOR", "Download verified. Checking package and signing identity.")
+                                updateManager.install(apk)
+                            } catch (error: Exception) {
+                                if (progressDialog.isShowing) progressDialog.dismiss()
+                                addMessage("THOR", "Update failed: ${error.message ?: error.javaClass.simpleName}")
+                            }
+                        }
+                    }
+                if (!update.mandatory) builder.setNegativeButton("Later", null)
+                builder.setCancelable(!update.mandatory).show().also { stylePremiumDialog(it) }
+            } catch (error: Exception) {
+                if (!silent) {
+                    addMessage("THOR", "Couldn't check for updates: ${error.message ?: error.javaClass.simpleName}")
                 }
             }
         }
@@ -165,6 +443,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             speak("Welcome, Boss.")
         }
         dialog.show()
+        stylePremiumDialog(dialog)
     }
 
     private fun startBossVoiceEnrollment() {
@@ -212,141 +491,548 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun buildScreen() {
+        val ink = Color.rgb(15, 16, 19)
+        val panel = Color.rgb(29, 30, 34)
+        val muted = Color.rgb(158, 158, 162)
+        val ivory = Color.rgb(245, 242, 235)
+        val gold = Color.rgb(215, 184, 121)
+        val accent = accentColor()
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(22, 24, 22, 18)
-            setBackgroundColor(Color.rgb(7, 11, 20))
+            setPadding(dp(18), dp(12), dp(18), dp(10))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(13, 14, 17), Color.rgb(24, 24, 27), Color.rgb(12, 13, 16))
+            )
         }
 
-        val title = TextView(this).apply {
-            text = "T H O R"
-            textSize = 30f
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), dp(4), dp(2), dp(12))
+        }
+        val brand = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        brand.addView(TextView(this).apply {
+            text = "THOR"
+            textSize = 27f
+            letterSpacing = 0.18f
+            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+            setTextColor(ivory)
+        }, matchWrap())
+        brand.addView(TextView(this).apply {
+            text = "YOUR PERSONAL AI"
+            textSize = 9f
+            letterSpacing = 0.22f
+            setTextColor(muted)
+        }, matchWrap())
+        header.addView(brand, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val settings = makeButton("⚙")
+        settings.textSize = 20f
+        settings.background = glassRipple(0x332F3034, 0x55D7B879, 24f)
+        header.addView(settings, LinearLayout.LayoutParams(dp(46), dp(46)))
+        settings.setOnClickListener { showSettingsDialog() }
+        root.addView(header, matchWrap())
+
+        val welcome = TextView(this).apply {
+            text = "Good to see you"
+            textSize = 22f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(ivory)
+            setPadding(dp(2), 0, 0, dp(3))
+        }
+        root.addView(welcome, matchWrap())
+        root.addView(TextView(this).apply {
+            text = "What would you like me to do?"
+            textSize = 13f
+            setTextColor(muted)
+            setPadding(dp(2), 0, 0, dp(14))
+        }, matchWrap())
+
+        val content = ScrollView(this).apply {
+            isFillViewport = false
+            clipToPadding = false
+            setPadding(0, 0, 0, dp(8))
+        }
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        val hero = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(75, 210, 255))
+            setPadding(dp(14), dp(12), dp(14), dp(13))
+            background = glassDrawable(0xE51F2024.toInt(), 0x66D7B879, 30f)
+            elevation = dp(4).toFloat()
         }
-        root.addView(title, matchWrap())
-        ObjectAnimator.ofFloat(title, "alpha", 0.55f, 1f).apply {
-            duration = 1500
-            repeatCount = ValueAnimator.INFINITE
-            repeatMode = ValueAnimator.REVERSE
-            start()
-        }
-
-        val subtitle = TextView(this).apply {
-            text = "PERSONAL ANDROID ASSISTANT"
+        hero.addView(TextView(this).apply {
+            text = "ARC REACTOR"
+            textSize = 10f
+            letterSpacing = 0.26f
+            gravity = Gravity.CENTER
+            setTextColor(gold)
+        }, matchWrap())
+        hero.addView(ThorHudView(this), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(188)
+        ))
+        hero.addView(TextView(this).apply {
+            text = "TAP TO TALK WITH THOR"
             textSize = 11f
+            letterSpacing = 0.16f
             gravity = Gravity.CENTER
-            setTextColor(Color.LTGRAY)
+            setTextColor(ivory)
+            setPadding(0, dp(2), 0, dp(7))
+        }, matchWrap())
+        // Compact creator seal retained from the approved THOR emblem treatment.
+        val creatorMark = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(3), dp(8), dp(8))
         }
-        root.addView(subtitle, matchWrap())
-
-        root.addView(ThorHudView(this), LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, (142 * resources.displayMetrics.density).toInt()
-        ).apply { bottomMargin = 8 })
-
-        language = Spinner(this)
-        language.adapter = ArrayAdapter(
-            this,
-            android.R.layout.simple_spinner_dropdown_item,
-            languages
-        )
-        root.addView(language, matchWrap())
-
-        val offlineButton = makeButton("INSTALL OFFLINE AI (~586 MB)")
-        offlineAiButton = offlineButton
-        offlineButton.setOnClickListener { installOfflineAi() }
-        root.addView(offlineButton, matchWrap())
-
-        voiceStyle = Spinner(this)
-        voiceStyle.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
-        voiceStyle.setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
-        voiceStyle.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                getSharedPreferences("thor_voice", MODE_PRIVATE).edit().putInt("style", position).apply()
-                applyVoiceStyle()
+        creatorMark.addView(TextView(this).apply {
+            text = "A  •  D"
+            textSize = 9f
+            letterSpacing = 0.04f
+            gravity = Gravity.CENTER
+            setTextColor(gold)
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x221A1916)
+                setStroke(dp(1), 0x99D7B879.toInt())
             }
+        }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { rightMargin = dp(9) })
+        val creatorCopy = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        val voiceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        voiceRow.addView(voiceStyle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val previewVoice = makeButton("PREVIEW VOICE")
-        previewVoice.setOnClickListener {
-            val sample = when (language.selectedItemPosition) {
-                1 -> "नमस्ते, मैं थॉर हूँ। मैं आपकी सहायता के लिए तैयार हूँ।"
-                2 -> "নমস্কার, আমি থর। আমি আপনাকে সাহায্য করতে প্রস্তুত।"
-                else -> "Hello. I am THOR. Systems are ready."
-            }
-            speak(sample)
+        creatorCopy.addView(TextView(this).apply {
+            text = "ENGINEERED & DEVELOPED BY"
+            textSize = 7f
+            letterSpacing = 0.13f
+            setTextColor(Color.rgb(151, 145, 132))
+        }, matchWrap())
+        creatorCopy.addView(TextView(this).apply {
+            text = "ARITRA ADHIKARY  •  DEEP DIKSHIT"
+            textSize = 9f
+            letterSpacing = 0.035f
+            setTextColor(Color.rgb(220, 202, 166))
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        }, matchWrap())
+        creatorMark.addView(creatorCopy, matchWrap())
+        hero.addView(creatorMark, matchWrap())
+        hero.setOnClickListener { startVoiceInput() }
+        column.addView(hero, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(14) })
+
+        val statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = glassDrawable(0xAA25262A.toInt(), 0x44D7B879, 20f)
         }
-        voiceRow.addView(previewVoice, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(voiceRow, matchWrap())
-
-
-        val scroll = ScrollView(this)
-        chat = TextView(this).apply {
+        val statusText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        statusText.addView(TextView(this).apply {
+            text = "THOR IS READY"
+            textSize = 11f
+            letterSpacing = 0.12f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(ivory)
+        }, matchWrap())
+        statusText.addView(TextView(this).apply {
+            text = "Your assistant is standing by"
+            textSize = 11f
+            setTextColor(muted)
+            setPadding(0, dp(3), 0, 0)
+        }, matchWrap())
+        statusCard.addView(statusText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        statusCard.addView(TextView(this).apply {
+            text = "●"
             textSize = 15f
-            setTextColor(Color.rgb(225, 235, 245))
-            setPadding(12, 16, 12, 16)
+            setTextColor(Color.rgb(151, 196, 157))
+        })
+        column.addView(statusCard, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(16) })
+
+        val sectionTitle = TextView(this).apply {
+            text = "QUICK ACCESS"
+            textSize = 10f
+            letterSpacing = 0.20f
+            setTextColor(Color.rgb(183, 177, 165))
+            setPadding(dp(2), 0, 0, dp(10))
         }
-        scroll.addView(chat)
-        root.addView(scroll, LinearLayout.LayoutParams(
+        column.addView(sectionTitle, matchWrap())
+
+        val tileRows = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        fun tileRow(
+            left: Triple<String, String, () -> Unit>,
+            right: Triple<String, String, () -> Unit>
+        ) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(makeHomeTile(left.first, left.second, left.third), LinearLayout.LayoutParams(0, dp(104), 1f).apply { rightMargin = dp(6); bottomMargin = dp(10) })
+            row.addView(makeHomeTile(right.first, right.second, right.third), LinearLayout.LayoutParams(0, dp(104), 1f).apply { leftMargin = dp(6); bottomMargin = dp(10) })
+            tileRows.addView(row, matchWrap())
+        }
+        tileRow(Triple("◉", "Chat", { showChatDialog() }), Triple("⌁", "Voice", { startVoiceInput() }))
+        tileRow(Triple("✧", "Offline AI", { installOfflineAi() }), Triple("▦", "Tools & features", { showFeaturesDialog() }))
+        tileRow(Triple("↻", "App updates", { checkForUpdates(silent = false) }), Triple("文", "Language & voice", { showLanguageVoiceInfo() }))
+        tileRow(Triple("⌕", "Web search", { showSearchDialog() }), Triple("◈", "AI models", { showAiProviderSettings() }))
+        column.addView(tileRows, matchWrap())
+
+        val footer = TextView(this).apply {
+            text = "A smarter way to get things done."
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(113, 113, 118))
+            setPadding(0, dp(5), 0, dp(10))
+        }
+        column.addView(footer, matchWrap())
+        content.addView(column)
+        root.addView(content, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
-        input = EditText(this).apply {
-            hint = "Type a command..."
-            setHintTextColor(Color.GRAY)
-            setTextColor(Color.WHITE)
-            setSingleLine(true)
-            setPadding(14, 10, 14, 10)
-        }
-        root.addView(input, matchWrap())
-
-        val buttons = LinearLayout(this).apply {
+        val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            setPadding(dp(5), dp(7), dp(5), dp(5))
+            background = glassDrawable(0xE51E1F23.toInt(), 0x44D7B879, 24f)
         }
+        fun navItem(label: String, glyph: String, action: () -> Unit) {
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(0, dp(3), 0, dp(3))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { action() }
+            }
+            item.addView(TextView(this).apply {
+                text = glyph
+                textSize = 23f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(if (label == "Home") gold else Color.rgb(218, 216, 210))
+            }, matchWrap())
+            item.addView(TextView(this).apply {
+                text = label
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setTextColor(if (label == "Home") ivory else Color.rgb(190, 188, 182))
+            }, matchWrap())
+            nav.addView(item, LinearLayout.LayoutParams(0, dp(54), 1f))
+        }
+        navItem("Home", "⌂") { }
+        navItem("Chat", "◉") { showChatDialog() }
+        navItem("Tools", "▦") { showFeaturesDialog() }
+        navItem("Settings", "⚙") { showSettingsDialog() }
+        root.addView(nav, matchWrap())
 
-        val send = makeButton("SEND")
+        // Keep a lightweight backing transcript view so THOR can append messages before Chat is opened.
+        chat = TextView(this).apply {
+            textSize = 14f
+            setTextColor(ivory)
+        }
+        input = EditText(this)
+        language = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, languages)
+            setSelection(getSharedPreferences("thor_preferences", MODE_PRIVATE).getInt("language", 0).coerceIn(0, languages.lastIndex))
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    getSharedPreferences("thor_preferences", MODE_PRIVATE).edit().putInt("language", position).apply()
+                }
+            }
+        }
+        voiceStyle = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, voiceStyles)
+            setSelection(getSharedPreferences("thor_voice", MODE_PRIVATE).getInt("style", 0).coerceIn(0, voiceStyles.lastIndex))
+        }
+        wakeButton = makeButton(if (wakeEnabled) "WAKE: ON" else "WAKE: OFF")
+        offlineAiButton = makeButton("Install offline AI")
+        setContentView(root)
+    }
+
+    private fun makeHomeTile(glyph: String, label: String, action: () -> Unit): LinearLayout {
+        val tile = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(15), dp(12), dp(12), dp(12))
+            background = glassDrawable(0xB52B2C30.toInt(), 0x44D7B879, 22f)
+            isClickable = true
+            isFocusable = true
+            elevation = dp(2).toFloat()
+            setOnClickListener { action() }
+        }
+        tile.addView(TextView(this).apply {
+            text = glyph
+            textSize = 22f
+            setTextColor(accentColor())
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(dp(34), dp(34)))
+        tile.addView(TextView(this).apply {
+            text = label
+            textSize = 13f
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setTextColor(Color.rgb(241, 239, 233))
+            setPadding(0, dp(5), 0, 0)
+        }, matchWrap())
+        return tile
+    }
+
+    private fun showSearchDialog() {
+        val queryField = EditText(this).apply {
+            hint = "Search the web..."
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("THOR WEB SEARCH")
+            .setMessage("Search public web results without leaving THOR.")
+            .setView(queryField)
+            .setPositiveButton("SEARCH") { _, _ -> searchWeb(queryField.text.toString().trim()) }
+            .setNegativeButton("CANCEL", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
+    private fun searchWeb(query: String) {
+        if (query.isBlank()) {
+            addMessage("THOR", "Enter something to search for.")
+            return
+        }
+        addMessage("YOU", "Search: " + query)
+        addMessage("THOR", "Searching the web for \"" + query + "\"…")
+        mainScope.launch {
+            try {
+                val results = ThorWebSearchManager.search(query)
+                if (results.isEmpty()) {
+                    addMessage("THOR", "The search provider returned no readable results. Opening the search in your browser instead.")
+                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query) + "&kp=1")), "Opening web search.")
+                    return@launch
+                }
+                val labels = results.mapIndexed { index, result ->
+                    (index + 1).toString() + ". " + result.title + "\n" + result.snippet.take(180)
+                }.toTypedArray()
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("SEARCH RESULTS")
+                    .setItems(labels) { _, which ->
+                        results.getOrNull(which)?.let { result ->
+                            launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse(result.url)), "Opening " + result.title + ".")
+                        }
+                    }
+                    .setNegativeButton("CLOSE", null)
+                    .show().also { stylePremiumDialog(it) }
+                addMessage("THOR", "Found " + results.size + " web results for \"" + query + "\". Tap a result to open it.")
+            } catch (error: Exception) {
+                android.util.Log.e("THOR_WEB_SEARCH", "Web search failed", error)
+                addMessage("THOR", "Web search failed: " + (error.message ?: error.javaClass.simpleName) + ". Opening the search in your browser.")
+                launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse("https://duckduckgo.com/?q=" + Uri.encode(query) + "&kp=1")), "Opening web search.")
+            }
+        }
+    }
+
+    private fun showChatDialog() {
+        val previousChat = chat
+        val previousInput = input
+        val dialogContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(10))
+            background = android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(24, 25, 29), Color.rgb(14, 15, 18))
+            )
+        }
+        val transcript = TextView(this).apply {
+            text = previousChat.text
+            textSize = 14f
+            setTextColor(Color.rgb(239, 238, 233))
+            setPadding(dp(4), dp(8), dp(4), dp(12))
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        chat = transcript
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(transcript)
+        }
+        dialogContent.addView(scroll, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        val composer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(5), dp(4), dp(5), dp(4))
+            background = glassDrawable(0xCC303238.toInt(), accentColor(), 24f)
+        }
+        val messageInput = EditText(this).apply {
+            hint = "Message THOR..."
+            setHintTextColor(Color.rgb(145, 145, 150))
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setSingleLine(true)
+            background = null
+            setPadding(dp(10), dp(8), dp(8), dp(8))
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND
+        }
+        input = messageInput
+        composer.addView(messageInput, LinearLayout.LayoutParams(0, dp(48), 1f))
+        val send = makeButton("Send")
         send.setOnClickListener {
-            val command = input.text.toString().trim()
+            val command = messageInput.text.toString().trim()
             if (command.isNotEmpty()) {
-                input.setText("")
+                messageInput.setText("")
                 handleCommand(command)
             }
         }
+        composer.addView(send, LinearLayout.LayoutParams(dp(76), dp(42)))
+        dialogContent.addView(composer, matchWrap())
 
-        val mic = makeButton("MIC")
-        mic.setOnClickListener { startVoiceInput() }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Chat with THOR")
+            .setView(dialogContent)
+            .setNegativeButton("Close", null)
+            .create()
+        dialog.setOnDismissListener {
+            previousChat.text = transcript.text
+            chat = previousChat
+            input = previousInput
+        }
+        dialog.show()
+        stylePremiumDialog(dialog)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+            (resources.displayMetrics.heightPixels * 0.78f).toInt()
+        )
+    }
 
-        val help = makeButton("HELP")
-        help.setOnClickListener { addMessage("THOR", helpText()) }
-        val wake = makeButton("WAKE: OFF")
-        wakeButton = wake
-        wake.setOnClickListener { toggleWakeWord(wake) }
+    /**
+     * Gives every native THOR dialog a contemporary charcoal / champagne treatment.
+     * Existing dialog actions remain unchanged.
+     */
+    private fun stylePremiumDialog(dialog: AlertDialog) {
+        val window = dialog.window ?: return
+        window.setBackgroundDrawableResource(android.R.color.transparent)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        window.setDimAmount(0.68f)
+        val surface = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(Color.rgb(39, 40, 45), Color.rgb(20, 21, 25))
+        ).apply {
+            cornerRadius = dp(26).toFloat()
+            setStroke(dp(1), 0x66D7B879)
+        }
+        window.decorView.background = surface
+        window.decorView.setPadding(dp(8), dp(5), dp(8), dp(5))
 
-        buttons.addView(send, weightedButton())
-        buttons.addView(mic, weightedButton())
-        buttons.addView(help, weightedButton())
-        buttons.addView(wake, weightedButton())
-        root.addView(buttons, matchWrap())
+        val ivory = Color.rgb(245, 242, 235)
+        val muted = Color.rgb(190, 188, 182)
+        val titleId = resources.getIdentifier("alertTitle", "id", "android")
+        if (titleId != 0) {
+            dialog.findViewById<TextView>(titleId)?.apply {
+                setTextColor(ivory)
+                textSize = 19f
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            }
+        }
+        dialog.findViewById<TextView>(android.R.id.message)?.apply {
+            setTextColor(muted)
+            textSize = 14f
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }
+        listOf(android.R.id.button1, android.R.id.button2, android.R.id.button3).forEach { id ->
+            dialog.findViewById<Button>(id)?.apply {
+                setTextColor(accentColor())
+                textSize = 13f
+                isAllCaps = false
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                background = glassRipple(0x332F3034, 0x66D7B879, 18f)
+            }
+        }
+        dialog.listView?.apply {
+            divider = android.graphics.drawable.ColorDrawable(0x22FFFFFF)
+            dividerHeight = dp(1)
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        window.setLayout((resources.displayMetrics.widthPixels * 0.91f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
 
-        setContentView(root)
+    private fun premiumSpinnerAdapter(options: List<String>): ArrayAdapter<String> {
+        return object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, options) {
+            private fun row(position: Int, convertView: android.view.View?, dropdown: Boolean): TextView {
+                val view = (convertView as? TextView) ?: TextView(this@MainActivity)
+                view.text = getItem(position).orEmpty()
+                view.textSize = 14f
+                view.setTextColor(if (dropdown) Color.rgb(245, 242, 235) else Color.rgb(230, 225, 215))
+                view.setPadding(dp(14), dp(if (dropdown) 12 else 10), dp(14), dp(if (dropdown) 12 else 10))
+                view.gravity = Gravity.CENTER_VERTICAL
+                view.setBackgroundColor(if (dropdown) Color.rgb(29, 30, 34) else Color.TRANSPARENT)
+                return view
+            }
+
+            override fun getView(position: Int, convertView: android.view.View?, parent: ViewGroup): android.view.View =
+                row(position, convertView, false)
+
+            override fun getDropDownView(position: Int, convertView: android.view.View?, parent: ViewGroup): android.view.View =
+                row(position, convertView, true)
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun glassDrawable(
+        fill: Int = 0xCC1B2A3B.toInt(),
+        stroke: Int = 0x557BD9F4,
+        radiusDp: Float = 22f
+    ): android.graphics.drawable.Drawable = android.graphics.drawable.GradientDrawable().apply {
+        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+        cornerRadius = radiusDp * resources.displayMetrics.density
+        setColor(fill)
+        setStroke(dp(1), stroke)
+    }
+
+    private fun glassRipple(
+        fill: Int = 0xCC1B2A3B.toInt(),
+        ripple: Int = 0x557BD9F4,
+        radiusDp: Float = 22f
+    ): android.graphics.drawable.Drawable {
+        val mask = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = radiusDp * resources.displayMetrics.density
+            setColor(Color.WHITE)
+        }
+        return android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(ripple),
+            glassDrawable(fill, 0x887BD9F4.toInt(), radiusDp),
+            mask
+        )
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT
-    ).apply { bottomMargin = 10 }
+    ).apply { bottomMargin = dp(8) }
 
     private fun weightedButton() = LinearLayout.LayoutParams(
-        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
-    ).apply { setMargins(4, 4, 4, 4) }
+        0, dp(42), 1f
+    ).apply { setMargins(dp(4), dp(2), dp(4), dp(2)) }
 
     private fun makeButton(label: String) = Button(this).apply {
         text = label
-        textSize = 12f
+        textSize = 10f
+        letterSpacing = 0.04f
         isAllCaps = false
+        minHeight = dp(42)
+        setPadding(dp(8), dp(4), dp(8), dp(4))
+        setTextColor(Color.rgb(242, 240, 234))
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        background = glassRipple(0xCC303238.toInt(), accentColor(), 22f)
+        stateListAnimator = null
+        elevation = dp(2).toFloat()
     }
 
     private fun installOfflineAi() {
@@ -405,34 +1091,132 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun startVoiceInput() {
-        val tag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to THOR")
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            // A preference only: the installed speech service may still require internet.
-            putExtra("android.speech.extra.PREFER_OFFLINE", true)
+        // Use Android's recognition service directly from THOR. This does not launch
+        // the external Google microphone activity or display its separate popup.
+        stopWakeWord()
+        wakeButton?.text = "WAKE: OFF"
+
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1001)
+            return
         }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            addMessage("THOR", "The in-app speech service is unavailable. Trying Android's system speech input…")
+            launchSystemSpeechFallback()
+            return
+        }
+
         try {
-            startActivityForResult(intent, 1001)
-        } catch (_: ActivityNotFoundException) {
-            addMessage("THOR", "No speech recognition app is available. Please type your command.")
+            stopTapRecognition()
+            tapRecognizer = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer ->
+                recognizer.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        addMessage("THOR", "Listening. Speak now.")
+                    }
+                    override fun onBeginningOfSpeech() = Unit
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray?) = Unit
+                    override fun onEndOfSpeech() = Unit
+                    override fun onPartialResults(partialResults: Bundle?) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
+
+                    override fun onError(error: Int) {
+                        android.util.Log.e("THOR_MIC", "Speech recognition error=$error")
+                        stopTapRecognition()
+                        if (error == SpeechRecognizer.ERROR_CLIENT ||
+                            error == SpeechRecognizer.ERROR_SERVER) {
+                            addMessage("THOR", "The in-app speech service stopped. Trying Android's system speech input…")
+                            launchSystemSpeechFallback()
+                        } else {
+                            addMessage("THOR", speechErrorMessage(error))
+                        }
+                    }
+
+                    override fun onResults(results: Bundle?) {
+                        val spoken = results
+                            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()
+                            ?.trim()
+                        stopTapRecognition()
+                        if (!spoken.isNullOrBlank()) handleCommand(spoken)
+                        else addMessage("THOR", "I didn't catch that. Please try again.")
+                    }
+                })
+            }
+
+            val languageTag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
+            val request = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                // Do not force offline mode: the installed recognition service chooses
+                // its available engine and language pack, as in the earlier working build.
+            }
+            tapRecognizer?.startListening(request)
+        } catch (error: Exception) {
+            android.util.Log.e("THOR_MIC", "Could not start in-app speech recognition", error)
+            stopTapRecognition()
+            addMessage("THOR", "THOR could not start the microphone: ${error.message ?: error.javaClass.simpleName}. Check microphone permission and close other apps using the microphone.")
         }
     }
 
-    @Deprecated("Legacy activity result API is used to avoid an extra AndroidX dependency.")
+    /**
+     * Some Android/OEM builds expose speech recognition through the system
+     * ACTION_RECOGNIZE_SPEECH activity even when the in-app SpeechRecognizer
+     * service is unavailable or crashes. Use it as a compatibility fallback.
+     */
+    private fun launchSystemSpeechFallback() {
+        try {
+            val languageTag = languageTags.getOrElse(language.selectedItemPosition) { "en-IN" }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to THOR")
+            }
+            startActivityForResult(intent, 1005)
+        } catch (error: Exception) {
+            addMessage("THOR", "Android's system speech input is unavailable: ${error.message ?: error.javaClass.simpleName}. Check that a speech service is installed and microphone permission is allowed.")
+        }
+    }
+
+    @Deprecated("Legacy activity result callback is used for speech-service compatibility.")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1001 && resultCode == RESULT_OK) {
-            val spoken = data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
+        if (requestCode != 1005) return
+        if (resultCode == RESULT_OK) {
+            val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()?.trim()
             if (!spoken.isNullOrBlank()) handleCommand(spoken)
+            else addMessage("THOR", "I didn't catch that. Please try again.")
+        } else {
+            addMessage("THOR", "Voice input was cancelled or the speech service returned no result.")
         }
+    }
+
+    private fun speechErrorMessage(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_AUDIO ->
+            "The speech service could not access microphone audio. Check Android's microphone privacy switch and close other apps using the mic."
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+            "Android denied microphone access. Allow Microphone in THOR's App info → Permissions."
+        SpeechRecognizer.ERROR_CLIENT ->
+            "The speech service stopped unexpectedly. Close and reopen THOR, then retry."
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+        SpeechRecognizer.ERROR_SERVER ->
+            "The speech service is unavailable. Check internet access or the installed speech service."
+        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE ->
+            "The speech service does not support the selected language. Try another language or install its speech pack."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
+            "Another app or recognition session is using the speech service. Wait a moment and retry."
+        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+            "I couldn't hear clear speech. Please try again."
+        else -> "Speech recognition failed (error $error). Check the device speech service and microphone permission."
+    }
+
+    private fun stopTapRecognition() {
+        try { tapRecognizer?.cancel() } catch (_: Exception) {}
+        try { tapRecognizer?.destroy() } catch (_: Exception) {}
+        tapRecognizer = null
     }
 
     private fun handleCommand(raw: String) {
@@ -654,13 +1438,12 @@ lower.startsWith("অ্যালার্ম ") -> {
 }
 
 
+            lower == "search" || lower == "google" || lower == "সার্চ" || lower == "खोज" -> showSearchDialog()
+
             lower.startsWith("search ") || lower.startsWith("google ") ||
                 lower.startsWith("खोज ") || lower.startsWith("সার্চ ") -> {
                 val query = command.substringAfter(' ').trim()
-                if (query.isNotEmpty()) {
-                    val url = "https://www.google.com/search?q=${Uri.encode(query)}"
-                    launchIntent(Intent(Intent.ACTION_VIEW, Uri.parse(url)), "Opening web search.")
-                }
+                if (query.isNotEmpty()) searchWeb(query) else showSearchDialog()
             }
 
             lower.startsWith("open ") || lower.startsWith("launch ") ||
@@ -760,7 +1543,6 @@ lower.startsWith("অ্যালার্ম ") -> {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTags.getOrElse(language.selectedItemPosition) { "en-IN" })
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra("android.speech.extra.PREFER_OFFLINE", true)
                 }
                 wakeRecognizer?.startListening(intent)
             } catch (error: Exception) {
@@ -786,6 +1568,10 @@ lower.startsWith("অ্যালার্ম ") -> {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
+            1001 -> {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoiceInput()
+                else addMessage("THOR", "Microphone permission is required for voice input. Enable it in Android App info → Permissions.")
+            }
             1002 -> {
                 val button = wakeButton ?: return
                 if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
@@ -831,31 +1617,466 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
     }
 
+    private fun showAiProviderSettings() {
+        val manager = ThorAiProviderManager(this)
+        val chatgpt = ThorChatGPTAccountManager(this)
+        val current = manager.settings()
+        val providers = ThorAiProviderManager.Provider.values()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(22, 8, 22, 4)
+        }
+        val providerSpinner = Spinner(this)
+        providerSpinner.adapter = premiumSpinnerAdapter(providers.map { it.title })
+        providerSpinner.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
+        providerSpinner.setSelection(providers.indexOf(current.provider).coerceAtLeast(0))
+
+        fun field(label: String, value: String, hint: String, password: Boolean = false): EditText {
+            panel.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(accentColor())
+                setPadding(0, 10, 0, 3)
+            })
+            return EditText(this).apply {
+                setSingleLine(true)
+                setText(value)
+                this.hint = hint
+                if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }.also { panel.addView(it, matchWrap()) }
+        }
+
+        panel.addView(TextView(this).apply { text = "AI provider"; textSize = 13f })
+        panel.addView(providerSpinner, matchWrap())
+        val modelField = field("Model ID", current.model, "Choose a model below or enter its exact ID")
+        panel.addView(TextView(this).apply {
+            text = "AVAILABLE MODELS"
+            textSize = 12f
+            setTextColor(accentColor())
+            setPadding(0, 10, 0, 3)
+        })
+        val modelSpinner = Spinner(this)
+        val modelAdapter = premiumSpinnerAdapter(listOf("Select a model"))
+        modelSpinner.adapter = modelAdapter
+        modelSpinner.setPopupBackgroundDrawable(glassDrawable(0xFF1D1E22.toInt(), 0x66D7B879, 16f))
+        var modelChoices: List<Pair<String, String>> = emptyList()
+        fun applyModelChoices(choices: List<Pair<String, String>>, selectedModel: String) {
+            modelChoices = choices
+            val selected = choices.indexOfFirst { it.second == selectedModel }
+            modelAdapter.clear()
+            modelAdapter.add("Select a model")
+            choices.forEach { modelAdapter.add(it.first) }
+            modelAdapter.notifyDataSetChanged()
+            modelSpinner.setSelection(if (selected >= 0) selected + 1 else 0)
+            modelSpinner.isEnabled = choices.isNotEmpty()
+        }
+        fun updateModelChoices(provider: ThorAiProviderManager.Provider, selectedModel: String) {
+            val suggestions = when (provider) {
+                ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> emptyList()
+                ThorAiProviderManager.Provider.GEMINI,
+                ThorAiProviderManager.Provider.GEMINI_API -> listOf(
+                    "gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.5-flash-lite"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.GROQ -> listOf(
+                    "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.CLAUDE -> listOf(
+                    "claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.OPENAI -> listOf(
+                    "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o-mini"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.OPENROUTER -> listOf(
+                    "openai/gpt-5.6-sol", "google/gemini-3.8-flash",
+                    "anthropic/claude-sonnet-5-5", "deepseek/deepseek-v4-pro",
+                    "meta-llama/llama-3.3-70b-instruct:free"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.DEEPSEEK -> listOf("deepseek-flash", "deepseek-v4-pro").map { it to it }
+                ThorAiProviderManager.Provider.MISTRAL -> listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest").map { it to it }
+                ThorAiProviderManager.Provider.CLOUDFLARE -> listOf(
+                    "@cf/meta/llama-3.1-8b-instruct", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+                ).map { it to it }
+                ThorAiProviderManager.Provider.CUSTOM -> emptyList()
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL -> emptyList()
+            }
+            val withSaved = if (selectedModel.isNotBlank() && suggestions.none { it.second == selectedModel }) {
+                listOf("Current/custom: $selectedModel" to selectedModel) + suggestions
+            } else suggestions
+            if (provider != ThorAiProviderManager.Provider.CHATGPT_ACCOUNT) {
+                applyModelChoices(withSaved, selectedModel)
+                return
+            }
+            if (!chatgpt.status().planUsageEnabled) {
+                applyModelChoices(withSaved, selectedModel)
+                return
+            }
+            modelAdapter.clear()
+            modelAdapter.add("Loading models from your ChatGPT account…")
+            modelAdapter.notifyDataSetChanged()
+            modelSpinner.isEnabled = false
+            mainScope.launch {
+                try {
+                    val accountModels = chatgpt.listModels().map { it.displayName to it.slug }
+                    val allModels = if (selectedModel.isNotBlank() && accountModels.none { it.second == selectedModel }) {
+                        listOf("Current/custom: $selectedModel" to selectedModel) + accountModels
+                    } else accountModels
+                    val resolvedModel = selectedModel.ifBlank { accountModels.firstOrNull()?.second.orEmpty() }
+                    applyModelChoices(allModels, resolvedModel)
+                    if (selectedModel.isBlank() && resolvedModel.isNotBlank()) modelField.setText(resolvedModel)
+                    if (allModels.isEmpty()) modelAdapter.add("No models available for this account")
+                } catch (error: Exception) {
+                    applyModelChoices(withSaved, selectedModel)
+                    Toast.makeText(this@MainActivity, "Could not load ChatGPT models: ${error.message ?: "try reconnecting"}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        panel.addView(modelSpinner, matchWrap())
+        modelSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                if (position > 0 && position - 1 in modelChoices.indices) {
+                    modelField.setText(modelChoices[position - 1].second)
+                }
+            }
+        }
+        updateModelChoices(current.provider, current.model)
+        panel.addView(TextView(this).apply {
+            text = "Choose a suggested model or enter a provider-supported model ID. ChatGPT account models load from your signed-in account; other lists are suggestions and may vary by account or region."
+            textSize = 11f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 4, 0, 6)
+        }, matchWrap())
+        val endpointField = field("API endpoint", current.endpoint, "HTTPS chat-completions endpoint")
+        val keyField = field(
+            "API key",
+            "",
+            if (current.apiKey.isNotBlank()) "Key saved encrypted on this device; blank keeps it" else "Paste provider API key",
+            true
+        )
+        panel.addView(TextView(this).apply {
+            text = "Automatic mode tries Gemini and configured free-tier providers first, then uses THOR Offline AI. Claude and OpenAI API calls can incur charges and are excluded from automatic mode unless you explicitly allow them. API keys are encrypted with Android Keystore."
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 12, 0, 4)
+        }, matchWrap())
+        val accountStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 10, 0, 4)
+        }
+        fun refreshChatGPTStatus() {
+            val status = chatgpt.status()
+            accountStatus.text = if (status.connected && status.planUsageEnabled) {
+                "ChatGPT account connected: ${status.email.ifBlank { "account verified" }}\nPlan usage permission is active."
+            } else if (status.connected) {
+                "ChatGPT identity connected, but plan usage permission is not active. Tap ENABLE CHATGPT PLAN USAGE to request consent again. Plan sharing requires an eligible Go, Plus, Pro, or Business plan; Free accounts can sign in but cannot share their Free allowance."
+            } else {
+                "ChatGPT is optional. Plan sharing requires an eligible Go, Plus, Pro, or Business plan; Free accounts can sign in but cannot share their Free allowance. Automatic mode tries Firebase Gemini first, then every configured provider key. Firebase AI Logic must be enabled in your Firebase project; sideloaded debug builds also need their App Check debug token registered."
+            }
+        }
+        refreshChatGPTStatus()
+        panel.addView(accountStatus, matchWrap())
+        val connectChatGPT = Button(this).apply {
+            text = when {
+                chatgpt.status().connected && !chatgpt.status().planUsageEnabled -> "ENABLE CHATGPT PLAN USAGE"
+                chatgpt.status().connected -> "RECONNECT CHATGPT ACCOUNT"
+                else -> "CONTINUE WITH CHATGPT"
+            }
+            setOnClickListener {
+                isEnabled = false
+                text = "OPENING CHATGPT..."
+                mainScope.launch {
+                    try {
+                        val result = chatgpt.signIn(this@MainActivity)
+                        refreshChatGPTStatus()
+                        updateModelChoices(ThorAiProviderManager.Provider.CHATGPT_ACCOUNT, modelField.text.toString())
+                        Toast.makeText(this@MainActivity, if (result.planUsageEnabled) "ChatGPT account connected." else "ChatGPT connected without plan usage permission.", Toast.LENGTH_LONG).show()
+                    } catch (error: Exception) {
+                        Toast.makeText(this@MainActivity, "ChatGPT sign-in failed: ${error.message ?: "please retry"}", Toast.LENGTH_LONG).show()
+                    } finally {
+                        isEnabled = true
+                        text = when {
+                chatgpt.status().connected && !chatgpt.status().planUsageEnabled -> "ENABLE CHATGPT PLAN USAGE"
+                chatgpt.status().connected -> "RECONNECT CHATGPT ACCOUNT"
+                else -> "CONTINUE WITH CHATGPT"
+            }
+                    }
+                }
+            }
+        }
+        panel.addView(connectChatGPT, matchWrap())
+        val disconnectChatGPT = Button(this).apply {
+            text = "DISCONNECT CHATGPT ACCOUNT"
+            setOnClickListener {
+                isEnabled = false
+                mainScope.launch {
+                    val revoked = chatgpt.disconnect()
+                    refreshChatGPTStatus()
+                    updateModelChoices(ThorAiProviderManager.Provider.CHATGPT_ACCOUNT, modelField.text.toString())
+                    connectChatGPT.text = "CONTINUE WITH CHATGPT"
+                    isEnabled = true
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (revoked) "ChatGPT account disconnected and session revoked."
+                        else "Disconnected locally. Remote revocation could not be confirmed; you can also remove THOR in ChatGPT settings.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+        panel.addView(disconnectChatGPT, matchWrap())
+
+        val allowMetered = android.widget.CheckBox(this).apply {
+            text = "Allow Claude/OpenAI in automatic mode (may incur API charges)"
+            isChecked = manager.allowMeteredAutoProviders()
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+        }
+        panel.addView(allowMetered, matchWrap())
+        val testConnection = Button(this).apply {
+            text = "TEST ONLINE CONNECTION"
+            setOnClickListener {
+                isEnabled = false
+                text = "TESTING..."
+                mainScope.launch {
+                    try {
+                        val selected = providers[providerSpinner.selectedItemPosition]
+                        when (selected) {
+                            ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> {
+                                if (!chatgpt.status().planUsageEnabled) error("Connect an eligible ChatGPT account first.")
+                                chatgpt.streamResponse("Reply with only the word OK.", modelField.text.toString(), onChunk = {})
+                                Toast.makeText(this@MainActivity, "ChatGPT model verified: ${modelField.text}", Toast.LENGTH_LONG).show()
+                            }
+                            ThorAiProviderManager.Provider.GEMINI -> {
+                                if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
+                                GeminiAssistant.stream("Reply with only the word OK.", modelField.text.toString(), {})
+                                Toast.makeText(this@MainActivity, "Gemini model verified: ${modelField.text}", Toast.LENGTH_LONG).show()
+                            }
+                            ThorAiProviderManager.Provider.AUTO -> {
+                                val result = manager.streamAutomatically("Reply with only the word OK.",
+                                    geminiFirebase = { emit ->
+                                        if (!firebaseReady) error("Firebase initialization/App Check is not ready.")
+                                        GeminiAssistant.stream("Reply with only the word OK.", manager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
+                                    }, onChunk = {})
+                                Toast.makeText(this@MainActivity, "Automatic route verified: " + result.provider.title, Toast.LENGTH_LONG).show()
+                            }
+                            ThorAiProviderManager.Provider.LOCAL -> error("On-device AI does not use an online connection test.")
+                            else -> {
+                                manager.stream(selected, "Reply with only the word OK.", {}, maxTokens = 64)
+                                Toast.makeText(this@MainActivity, "Model verified: ${selected.title} / ${modelField.text}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    } catch (error: Exception) {
+                        val reason = error.message ?: error.javaClass.simpleName
+                        val appCheckHint = if (reason.contains("app check", true) || reason.contains("attestation", true) || reason.contains("403", true)) {
+                            "\n\nFor a sideloaded debug build, register the debug token printed in Logcat at Firebase Console > App Check > your Android app > Manage debug tokens."
+                        } else ""
+                        AlertDialog.Builder(this@MainActivity)
+                            .setTitle("CONNECTION TEST FAILED")
+                            .setMessage(reason + appCheckHint)
+                            .setPositiveButton("OK", null)
+                            .show().also { stylePremiumDialog(it) }
+                    } finally { runOnUiThread { isEnabled = true; text = "TEST ONLINE CONNECTION" } }
+                }
+            }
+        }
+        panel.addView(testConnection, matchWrap())
+
+        var previousProvider = current.provider
+        fun applyProviderState(provider: ThorAiProviderManager.Provider) {
+            val needsEndpointAndKey = provider !in listOf(
+                ThorAiProviderManager.Provider.CHATGPT_ACCOUNT,
+                ThorAiProviderManager.Provider.GEMINI,
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
+            modelField.isEnabled = provider !in listOf(
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
+            modelSpinner.isEnabled = modelChoices.isNotEmpty() && provider !in listOf(
+                ThorAiProviderManager.Provider.AUTO,
+                ThorAiProviderManager.Provider.LOCAL
+            )
+            endpointField.isEnabled = needsEndpointAndKey
+            keyField.isEnabled = needsEndpointAndKey
+        }
+        applyProviderState(current.provider)
+        providerSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long
+            ) {
+                val selected = providers[position]
+                if (selected != previousProvider) {
+                    val saved = manager.settings(selected)
+                    modelField.setText(saved.model)
+                    updateModelChoices(selected, saved.model)
+                    endpointField.setText(saved.endpoint)
+                    keyField.setText("")
+                    keyField.hint = if (saved.apiKey.isNotBlank()) {
+                        "Key saved encrypted on this device; blank keeps it"
+                    } else {
+                        "Paste provider API key"
+                    }
+                    previousProvider = selected
+                }
+                applyProviderState(selected)
+            }
+        }
+
+        val scroll = ScrollView(this).apply { addView(panel) }
+        AlertDialog.Builder(this)
+            .setTitle("AI PROVIDER & MODEL")
+            .setView(scroll)
+            .setPositiveButton("SAVE") { _, _ ->
+                val selected = providers[providerSpinner.selectedItemPosition]
+                try {
+                    manager.save(
+                        selected,
+                        modelField.text.toString(),
+                        endpointField.text.toString(),
+                        keyField.text.toString()
+                    )
+                    manager.setAllowMeteredAutoProviders(allowMetered.isChecked)
+                    Toast.makeText(this, "AI provider and model saved.", Toast.LENGTH_LONG).show()
+                } catch (error: Exception) {
+                    Toast.makeText(this, "Could not save provider settings: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNeutralButton("REMOVE SAVED KEY") { _, _ ->
+                val selected = providers[providerSpinner.selectedItemPosition]
+                manager.clearKey(selected)
+                Toast.makeText(this, "Saved API key removed from this device.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("CANCEL", null)
+            .show().also { stylePremiumDialog(it) }
+    }
+
     private fun askGemini(prompt: String) {
-        if (!firebaseReady) {
-            askLocalOrFallback(prompt)
-            return
+        if (activeAiReply) { addMessage("THOR", "One moment — I'm still finishing the previous answer."); return }
+        val providerManager = ThorAiProviderManager(this)
+        val chatgpt = ThorChatGPTAccountManager(this)
+        val selectedSettings = providerManager.settings()
+        val selectedProvider = selectedSettings.provider
+        if (selectedProvider == ThorAiProviderManager.Provider.LOCAL) { askLocalOrFallback(prompt); return }
+        val languageInstruction = when (language.selectedItemPosition) { 1 -> "Reply in natural Hindi."; 2 -> "Reply in natural Bengali."; else -> "Reply in clear English." }
+        val recentContext = aiConversation.takeLast(12).joinToString("\n") { item -> item.first + ": " + item.second.take(1800) }
+        val styleInstruction = buildString {
+            append("You are THOR, a concise and helpful Android assistant. Answer directly, accurately, and naturally.\n")
+            append(languageInstruction).append("\n").append(learningMemory.systemContext())
+            if (recentContext.isNotBlank()) append("\nRecent conversation:\n").append(recentContext)
+            append("\nUser: ").append(prompt)
         }
-        val languageInstruction = when (language.selectedItemPosition) {
-            1 -> "Reply in natural Hindi."
-            2 -> "Reply in natural Bengali."
-            else -> "Reply in clear English."
+        activeAiReply = true
+        addMessage("THOR", "")
+        val routeLabel = when (selectedProvider) {
+            ThorAiProviderManager.Provider.AUTO -> "configured online AI providers"
+            ThorAiProviderManager.Provider.GEMINI -> "Firebase Gemini"
+            ThorAiProviderManager.Provider.CHATGPT_ACCOUNT ->
+                if (chatgpt.status().planUsageEnabled) "your ChatGPT account" else "configured fallback providers"
+            ThorAiProviderManager.Provider.LOCAL -> "on-device AI"
+            else -> selectedProvider.title
         }
-        val styleInstruction = "Automatically match the user's language and level of informality in every reply. If the user writes in casual English, internet slang, Bengali colloquial language, or Bengali-English mix, reply naturally in that same casual register and language. Understand common everyday slang and informal spellings; do not lecture the user about slang or unnecessarily correct it. Use slang naturally rather than forcing it into every sentence. Keep replies clear and avoid hateful slurs or targeted harassment."
-        android.util.Log.i("THOR_GEMINI", "Gemini request started")
-        addMessage("THOR", "Thinking... (up to 60 seconds)")
+        // Show activity before the first network token arrives. Without this,
+        // a slow model handshake leaves a blank assistant bubble that looks frozen.
+        chat.append("Connecting to $routeLabel…\n")
+        val streamed = StringBuilder()
         mainScope.launch {
             try {
-                val answer = GeminiAssistant.ask("$languageInstruction\n$styleInstruction\n${learningMemory.systemContext()}\nUser: $prompt")
-                android.util.Log.i("THOR_GEMINI", "Gemini request succeeded")
-                addMessage("THOR", answer)
-                speak(answer)
+                val onToken: (String) -> Unit = { token ->
+                    streamed.append(token)
+                    runOnUiThread { if (!isFinishing && !isDestroyed) chat.append(token) }
+                }
+                var providerTitle: String
+                when (selectedProvider) {
+                    ThorAiProviderManager.Provider.AUTO -> {
+                        val result = providerManager.streamAutomatically(styleInstruction,
+                            geminiFirebase = { emit ->
+                                if (!firebaseReady) error("Firebase initialization failed. The first real Gemini request will verify the live service and App Check.")
+                                GeminiAssistant.stream(styleInstruction, providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model, emit)
+                            },
+                            onChunk = onToken)
+                        providerTitle = result.provider.title
+                    }
+                    ThorAiProviderManager.Provider.GEMINI -> {
+                        if (!firebaseReady) error("Firebase initialization failed. Check Firebase configuration and App Check.")
+                        GeminiAssistant.stream(styleInstruction, selectedSettings.model, onToken)
+                        providerTitle = selectedSettings.model
+                    }
+                    ThorAiProviderManager.Provider.CHATGPT_ACCOUNT -> {
+                        if (chatgpt.status().planUsageEnabled) {
+                            // Do not silently change billing paths after the user enabled ChatGPT plan usage.
+                            chatgpt.streamResponse(styleInstruction, selectedSettings.model, onToken)
+                            providerTitle = "ChatGPT account"
+                        } else {
+                            runOnUiThread {
+                                if (!isFinishing && !isDestroyed) {
+                                    chat.append("ChatGPT plan usage is not connected. Trying THOR's configured automatic providers…\n")
+                                }
+                            }
+                            val result = providerManager.streamAutomatically(
+                                styleInstruction,
+                                geminiFirebase = { emit ->
+                                    if (!firebaseReady) error("Firebase AI Logic is not initialized. Check Firebase setup and App Check.")
+                                    GeminiAssistant.stream(
+                                        styleInstruction,
+                                        providerManager.settings(ThorAiProviderManager.Provider.GEMINI).model,
+                                        emit
+                                    )
+                                },
+                                onChunk = onToken
+                            )
+                            providerTitle = result.provider.title + " (automatic fallback)"
+                        }
+                    }
+                    else -> {
+                        providerManager.stream(selectedProvider, styleInstruction, onToken)
+                        providerTitle = selectedProvider.title
+                    }
+                }
+                val finalText = streamed.toString().trim()
+                if (finalText.isNotBlank()) {
+                    aiConversation.add("User" to prompt)
+                    aiConversation.add("THOR" to finalText)
+                    while (aiConversation.size > 20) aiConversation.removeAt(0)
+                    runOnUiThread { if (!isFinishing && !isDestroyed) chat.append("\n\n— " + providerTitle + "\n\n") }
+                    speak(finalText)
+                }
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
-                android.util.Log.e("THOR_GEMINI", "Gemini request failed", error)
-                val detail = error.message ?: error.javaClass.simpleName
-                addMessage("THOR", "Online AI unavailable ($detail). Switching to the on-device AI.")
-                askLocalOrFallback(prompt)
-            }
+                android.util.Log.e("THOR_AI_PROVIDER", "Live response failed", error)
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        if (streamed.isEmpty()) {
+                            val reason = error.message ?: error.javaClass.simpleName
+                            val offlineReady = offlineAi.isModelInstalled() || offlineAi.hasBundledModel()
+                            val needsAppCheckSetup = reason.contains("app check", ignoreCase = true) ||
+                                reason.contains("attestation", ignoreCase = true) ||
+                                reason.contains("403", ignoreCase = true)
+                            val appCheckHint = if (needsAppCheckSetup) {
+                                " For a sideloaded debug build, register its App Check debug token in Firebase Console > App Check > your Android app > Manage debug tokens."
+                            } else ""
+                            val fallbackStatus = if (offlineReady) {
+                                " Switching to on-device AI."
+                            } else {
+                                " The offline model is not installed, so only THOR's limited built-in fallback is available."
+                            }
+                            chat.append("Online AI unavailable: " + reason + "." + appCheckHint + fallbackStatus + "\n\n")
+                            activeAiReply = false
+                            askLocalOrFallback(prompt)
+                        } else {
+                            chat.append("\n\n[Response interrupted: " + (error.message ?: "connection lost") + "]\n\n")
+                        }
+                    }
+                }
+            } finally { activeAiReply = false }
         }
     }
 
@@ -1084,7 +2305,7 @@ private fun launchIntent(
         "• teach me that no cap means I am serious\n" +
         "• what have you learned / forget learning X / clear learned memory\n" +
         "• install offline AI for open-ended offline chat\n\n" +
-        "The offline language model is bundled into the APK build (~586 MB). Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
+        "The offline language model is downloaded separately on demand (~586 MB), not bundled into each APK. Reminder notifications require notification permission; Android battery settings may delay them. Hindi/Bengali speech recognition depends on the installed speech service."
 
     private fun respond(english: String, hindi: String, bengali: String) {
         val answer = when (language.selectedItemPosition) {
@@ -1141,12 +2362,14 @@ private fun launchIntent(
     }
 
     override fun onPause() {
+        stopTapRecognition()
         stopWakeWord()
         wakeButton?.text = "WAKE: OFF"
         super.onPause()
     }
 
     override fun onDestroy() {
+        stopTapRecognition()
         stopWakeWord()
         try { bossRecorder?.stop() } catch (_: Exception) {}
         bossRecorder?.release()
