@@ -95,6 +95,12 @@ object GeminiAssistant {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (isQuotaError(error)) {
+                    throw IllegalStateException(
+                        "Firebase Gemini quota has been reached for this project. Try again after the quota resets or choose another configured provider.",
+                        error
+                    )
+                }
                 lastError = error
                 Log.w(TAG, "Gemini attempt ${attempt + 1} failed", error)
                 if (attempt == 0) delay(1_200L)
