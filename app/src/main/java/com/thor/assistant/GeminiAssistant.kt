@@ -7,6 +7,7 @@ import com.google.firebase.ai.ai
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.collect
 
 /**
  * Gemini access through Firebase AI Logic.
@@ -14,14 +15,21 @@ import kotlinx.coroutines.withTimeout
  */
 object GeminiAssistant {
     private const val TAG = "THOR_GEMINI"
-    private const val REQUEST_TIMEOUT_MS = 60_000L
+    private const val REQUEST_TIMEOUT_MS = 45_000L
 
-    private val model by lazy {
-        Firebase.ai(backend = GenerativeBackend.googleAI())
-            .generativeModel("gemini-3.8-flash")
+    suspend fun stream(prompt: String, modelName: String = "gemini-3.8-flash", onChunk: (String) -> Unit): String = withTimeout(REQUEST_TIMEOUT_MS) {
+        val model = Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(modelName)
+        val full = StringBuilder()
+        model.generateContentStream(prompt).collect { chunk ->
+            val piece = chunk.text.orEmpty()
+            if (piece.isNotEmpty()) { full.append(piece); onChunk(piece) }
+        }
+        full.toString().takeIf { it.isNotBlank() } ?: error("Gemini returned an empty streamed response.")
     }
 
-    suspend fun ask(prompt: String): String = withTimeout(REQUEST_TIMEOUT_MS) {
+    suspend fun ask(prompt: String, modelName: String = "gemini-3.8-flash"): String = withTimeout(REQUEST_TIMEOUT_MS) {
+        val model = Firebase.ai(backend = GenerativeBackend.googleAI())
+            .generativeModel(modelName)
         var lastError: Exception? = null
 
         // A short retry helps when App Check is refreshing a token or the mobile
