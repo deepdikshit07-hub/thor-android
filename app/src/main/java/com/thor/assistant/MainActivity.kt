@@ -1944,7 +1944,7 @@ lower.startsWith("অ্যালার্ম ") -> {
         }
         // Show activity before the first network token arrives. Without this,
         // a slow model handshake leaves a blank assistant bubble that looks frozen.
-        chat.append("Connecting to $routeLabel…\\n")
+        chat.append("Connecting to $routeLabel…\n")
         val streamed = StringBuilder()
         mainScope.launch {
             try {
