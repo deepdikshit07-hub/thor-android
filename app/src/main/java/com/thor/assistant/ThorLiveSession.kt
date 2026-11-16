@@ -76,19 +76,36 @@ class ThorLiveSession(
     private var playbackJob: Job? = null
     private var previousAudioMode: Int? = null
 
-    suspend fun start(apiKey: String, voiceName: String, languageName: String) {
-        require(apiKey.isNotBlank()) { "Add your Gemini API key in THOR Settings → AI Provider before starting Live Mode." }
+    suspend fun start(
+        credential: String,
+        voiceName: String,
+        languageName: String,
+        directApiKey: Boolean = false
+    ) {
+        require(credential.isNotBlank()) { "A secure Live token or optional Gemini API key is required." }
+        if (directApiKey) {
+            require(credential.length >= 20) { "The Gemini API key looks incomplete." }
+        } else {
+            require(credential.startsWith("authTokens/") || credential.startsWith("auth_tokens/")) {
+                "The secure Live token service returned an invalid token."
+            }
+        }
         check(socket == null) { "Live session is already started." }
         stopped.set(false)
         notifyState(State.CONNECTING, "SECURING LIVE CONNECTION")
         try {
-            // Use the same Gemini API key already saved in AI Provider settings.
-            // Google documents API-key authentication for direct Live WebSocket clients.
+            // Prefer the single-use server token. The optional direct-key path remains
+            // available for users who have not deployed the secure THOR Worker.
             if (stopped.get()) return
             val ready = CompletableDeferred<Unit>()
-            val request = Request.Builder()
-                .url("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + java.net.URLEncoder.encode(apiKey, "UTF-8"))
-                .build()
+            val socketUrl = if (directApiKey) {
+                "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" +
+                    java.net.URLEncoder.encode(credential, "UTF-8")
+            } else {
+                "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=" +
+                    java.net.URLEncoder.encode(credential, "UTF-8")
+            }
+            val request = Request.Builder().url(socketUrl).build()
             socket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     val setup = JSONObject()
