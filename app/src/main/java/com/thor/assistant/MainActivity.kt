@@ -1730,9 +1730,9 @@ lower.startsWith("অ্যালার্ম ") -> {
             accountStatus.text = if (status.connected && status.planUsageEnabled) {
                 "ChatGPT account connected: ${status.email.ifBlank { "account verified" }}\nPlan usage permission is active."
             } else if (status.connected) {
-                "ChatGPT identity connected, but plan usage permission is not active."
+                "ChatGPT identity connected, but plan usage permission is not active. Tap ENABLE CHATGPT PLAN USAGE to request consent again. Plan sharing requires an eligible Go, Plus, Pro, or Business plan; Free accounts can sign in but cannot share their Free allowance."
             } else {
-                "ChatGPT is optional and is not connected. Automatic mode tries Firebase Gemini first, then configured provider keys. Firebase AI Logic must be enabled in your Firebase project; register the App Check debug token for sideloaded debug builds."
+                "ChatGPT is optional. Plan sharing requires an eligible Go, Plus, Pro, or Business plan; Free accounts can sign in but cannot share their Free allowance. Automatic mode tries Firebase Gemini first, then every configured provider key. Firebase AI Logic must be enabled in your Firebase project; sideloaded debug builds also need their App Check debug token registered."
             }
         }
         refreshChatGPTStatus()
