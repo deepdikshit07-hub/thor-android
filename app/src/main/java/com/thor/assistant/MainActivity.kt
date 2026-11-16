@@ -132,8 +132,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         liveStatusText = status
         panel.addView(status, matchWrap())
+        val livePrefs = getSharedPreferences("thor_live_settings", MODE_PRIVATE)
+        val workerUrl = livePrefs.getString("worker_url", "").orEmpty()
+        val geminiKeySaved = ThorAiProviderManager(this)
+            .settings(ThorAiProviderManager.Provider.GEMINI_API).apiKey.isNotBlank()
         val caption = TextView(this).apply {
-            text = "Live Mode streams microphone audio to Gemini and plays Gemini's natural voice response. A Gemini API key and microphone permission are required."
+            text = if (workerUrl.isNotBlank()) {
+                "Secure Live connection is configured. THOR requests a single-use token from your Cloudflare Worker; the permanent Gemini key stays on the server."
+            } else if (geminiKeySaved) {
+                "Configure the secure Cloudflare Worker for keyless Live Mode, or use your optional Gemini API key as a fallback. THOR plays Gemini's natural voice directly."
+            } else {
+                "Configure your Cloudflare Worker for keyless Live Mode. An optional Gemini API key can also be used as a fallback."
+            }
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
@@ -141,6 +151,31 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
         liveCaptionText = caption
         panel.addView(caption, matchWrap())
+        val configureServer = makeButton("CONFIGURE SECURE LIVE SERVER")
+        configureServer.setOnClickListener {
+            val urlField = EditText(this).apply {
+                setSingleLine(true)
+                hint = "https://your-worker.workers.dev"
+                setText(livePrefs.getString("worker_url", "").orEmpty())
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Secure Live server")
+                .setMessage("Enter your deployed THOR Cloudflare Worker URL. Secure mode uses Firebase sign-in and a short-lived Gemini token; it does not need a Gemini API key on this phone.")
+                .setView(urlField)
+                .setPositiveButton("SAVE") { _, _ ->
+                    val value = urlField.text.toString().trim().trimEnd('/')
+                    livePrefs.edit().putString("worker_url", value).apply()
+                    caption.text = if (value.isNotBlank()) {
+                        "Secure Live server saved. THOR will request a short-lived token when Live Mode starts."
+                    } else {
+                        "Secure Live server cleared. You can still use an optional Gemini API key."
+                    }
+                }
+                .setNegativeButton("CANCEL", null)
+                .show().also { stylePremiumDialog(it) }
+        }
+        panel.addView(configureServer, matchWrap())
         val toggle = makeButton("START LIVE SESSION")
         liveToggleButton = toggle
         panel.addView(toggle, matchWrap())
@@ -171,18 +206,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             liveStatusText?.text = "MICROPHONE PERMISSION REQUIRED"
             return
         }
+        val workerUrl = getSharedPreferences("thor_live_settings", MODE_PRIVATE)
+            .getString("worker_url", "").orEmpty()
         val apiKey = ThorAiProviderManager(this)
             .settings(ThorAiProviderManager.Provider.GEMINI_API).apiKey
-        if (apiKey.isBlank()) {
-            liveStatusText?.text = "GEMINI API KEY REQUIRED"
-            liveCaptionText?.text = "Open Settings → AI provider & model, select Google Gemini API, add your Gemini API key, and save. Live Mode uses this key directly."
-            Toast.makeText(this, "Add a Gemini API key in Settings → AI provider & model before starting Live Mode.", Toast.LENGTH_LONG).show()
+        if (workerUrl.isBlank() && apiKey.isBlank()) {
+            liveStatusText?.text = "SECURE LIVE SERVER REQUIRED"
+            liveCaptionText?.text = "Configure your THOR Cloudflare Worker in this screen, or add an optional Gemini API key in AI Provider settings."
+            Toast.makeText(this, "Configure the secure Live server or an optional Gemini API key.", Toast.LENGTH_LONG).show()
             return
         }
-        beginThorLiveSession(apiKey)
+        beginThorLiveSession(workerUrl, apiKey)
     }
 
-    private fun beginThorLiveSession(apiKey: String) {
+    private fun beginThorLiveSession(workerUrl: String, apiKey: String) {
         if (liveSession != null || isFinishing || isDestroyed) return
         val voiceName = when (voiceStyle.selectedItemPosition) {
             1 -> "Aoede"
@@ -217,13 +254,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         })
         liveSession = session
         liveToggleButton?.text = "CONNECTING..."
-        liveStatusText?.text = "CONNECTING TO GEMINI LIVE"
-        liveCaptionText?.text = "Waiting for Gemini to confirm the live audio session..."
+        liveStatusText?.text = if (workerUrl.isNotBlank()) "REQUESTING SECURE LIVE ACCESS" else "CONNECTING TO GEMINI LIVE"
+        liveCaptionText?.text = if (workerUrl.isNotBlank()) {
+            "Requesting a single-use token from THOR's secure server..."
+        } else {
+            "Connecting with the optional Gemini API key..."
+        }
         mainScope.launch {
             try {
-                session.start(apiKey, voiceName, languageName)
+                val directApiKey = workerUrl.isBlank()
+                val credential = if (directApiKey) apiKey else ThorLiveTokenClient().create(workerUrl, voiceName)
+                session.start(credential, voiceName, languageName, directApiKey)
             } catch (error: Exception) {
                 if (liveSession === session) liveSession = null
+                session.stop()
                 liveOrb?.setLiveState(ThorLiveSession.State.ERROR)
                 liveStatusText?.text = "LIVE MODE UNAVAILABLE"
                 liveToggleButton?.text = "RETRY LIVE SESSION"
