@@ -71,7 +71,7 @@ class ThorAiProviderManager(private val context: Context) {
             val grantedScopes = accountPrefs.getString("scope", "").orEmpty().split(' ').toSet()
             val planUsageReady = grantedScopes.contains("resource.invoke") &&
                 grantedScopes.contains("chatgpt.tokens.use.direct") &&
-                !decrypt(accountPrefs.getString("access_token", null)).isNullOrBlank()
+                !accountPrefs.getString("access_token", null).isNullOrBlank()
             if (prefs.getString("provider", Provider.AUTO.name) == Provider.CHATGPT_ACCOUNT.name && !planUsageReady) {
                 prefs.edit().putString("provider", Provider.AUTO.name).apply()
             }
