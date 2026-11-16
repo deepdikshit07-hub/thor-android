@@ -47,6 +47,25 @@ class ThorWebSearchManagerTest {
     }
 
     @Test
+    fun parsesDuckDuckGoLiteTableResults() {
+        val html = """
+            <table>
+              <tr>
+                <td><a class="result-link" href="https://example.net/story">Lite search result</a></td>
+                <td class="result-snippet">A result from the lightweight search page.</td>
+              </tr>
+            </table>
+        """.trimIndent()
+
+        val results = ThorWebSearchManager.parseResults(html)
+
+        assertEquals(1, results.size)
+        assertEquals("Lite search result", results.single().title)
+        assertEquals("https://example.net/story", results.single().url)
+        assertEquals("A result from the lightweight search page.", results.single().snippet)
+    }
+
+    @Test
     fun honorsRequestedResultLimit() {
         val html = (1..4).joinToString("") { index ->
             """<div class="result"><a class="result__a" href="https://example.com/$index">Result $index</a></div>"""
