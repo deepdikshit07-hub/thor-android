@@ -8,6 +8,7 @@ on:
   pull_request:
     branches:
       - main
+      - feature/thor-ota-updates
 
 permissions:
   contents: read
@@ -40,19 +41,38 @@ jobs:
           gradle-version: '8.13'
 
       - name: Run Android lint and unit tests
+        shell: bash
         run: |
-          gradle --no-daemon :app:lintDebug :app:testDebugUnitTest
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:lintDebug :app:testDebugUnitTest; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle dependency/build attempt $attempt failed; retrying after backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
       # The 586 MB LiteRT model is intentionally NOT bundled into the APK.
-      # ThorOfflineAi downloads it on demand into private app storage.
+      # ThorOfflineAi already downloads it on demand into private app storage.
       - name: Build lightweight debug APK
         run: |
           VERSION_CODE="$((GITHUB_RUN_ID % 2000000000))"
           if [ "$VERSION_CODE" -lt 1 ]; then VERSION_CODE=1; fi
           VERSION_NAME="2.1.${GITHUB_RUN_NUMBER}"
-          gradle --no-daemon :app:assembleDebug \
-            -PthorVersionCode="$VERSION_CODE" \
-            -PthorVersionName="$VERSION_NAME"
+          for attempt in 1 2 3; do
+            if gradle --no-daemon :app:assembleDebug \
+              -PthorVersionCode="$VERSION_CODE" \
+              -PthorVersionName="$VERSION_NAME"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Gradle APK build attempt $attempt failed; retrying after backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit 1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
