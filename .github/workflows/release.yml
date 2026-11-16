@@ -14,8 +14,8 @@ permissions:
 
 # A single publisher prevents two runs racing to publish the same latest release.
 concurrency:
-  group: thor-ota-release
-  cancel-in-progress: false
+  group: thor-ota-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate:
